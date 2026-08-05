@@ -1,11 +1,29 @@
 import { stripCpfEverywhere } from './security'
 
 /**
+ * Normaliza o texto que vai pro WhatsApp PRESERVANDO os parágrafos.
+ * - CRLF/CR viram \n (Evolution/WhatsApp só entende \n)
+ * - tira espaço sobrando nas pontas de cada linha
+ * - no máximo 1 linha em branco seguida (2 quebras)
+ */
+export function normalizeOutboundText(text: string): string {
+  return (text || '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[^\S\n]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/**
  * Apply template with {nome}. Never inject CPF.
  */
 export function applyTemplate(template: string, nome: string): string {
   const safeName = (nome || 'cliente').trim() || 'cliente'
-  return template.replaceAll('{nome}', safeName).replaceAll('{NOME}', safeName)
+  return normalizeOutboundText(
+    template.replaceAll('{nome}', safeName).replaceAll('{NOME}', safeName),
+  )
 }
 
 export function localRewrite(base: string, seed: number): string {
