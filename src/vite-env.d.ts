@@ -5,6 +5,9 @@ interface ImportMetaEnv {
   readonly VITE_LISTA_ZAP_WA_SECRET?: string
 }
 
+/** Injetado no build (vite define) — data/hora UTC do bundle. */
+declare const __BUILD_ID__: string
+
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
