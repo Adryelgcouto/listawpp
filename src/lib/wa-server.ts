@@ -1,6 +1,7 @@
 /**
  * Cliente do backend /api/wa/* na Vercel.
  * Chave Evolution fica no servidor — o usuário não cola nada.
+ * Se LISTA_ZAP_WA_SECRET / VITE_LISTA_ZAP_WA_SECRET existir, manda no header.
  */
 
 export type ServerWaStatus = {
@@ -12,8 +13,19 @@ export type ServerWaStatus = {
   message?: string
 }
 
+function waHeaders(json = false): HeadersInit {
+  const secret = (import.meta.env.VITE_LISTA_ZAP_WA_SECRET as string | undefined)?.trim()
+  const h: Record<string, string> = {}
+  if (json) h['Content-Type'] = 'application/json'
+  if (secret) {
+    h['x-lista-zap-secret'] = secret
+    h.Authorization = `Bearer ${secret}`
+  }
+  return h
+}
+
 export async function serverWaStatus(): Promise<ServerWaStatus> {
-  const r = await fetch('/api/wa/status')
+  const r = await fetch('/api/wa/status', { headers: waHeaders() })
   return (await r.json()) as ServerWaStatus
 }
 
@@ -23,14 +35,16 @@ export async function serverWaQr(): Promise<{
   pairingCode?: string | null
   message?: string
   instance?: string
+  status?: string
 }> {
-  const r = await fetch('/api/wa/qr')
+  const r = await fetch('/api/wa/qr', { headers: waHeaders() })
   return (await r.json()) as {
     ok: boolean
     qr?: string | null
     pairingCode?: string | null
     message?: string
     instance?: string
+    status?: string
   }
 }
 
@@ -41,7 +55,7 @@ export async function serverWaSend(params: {
 }): Promise<void> {
   const r = await fetch('/api/wa/send', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: waHeaders(true),
     body: JSON.stringify({
       number: params.number,
       text: params.text,

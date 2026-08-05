@@ -45,7 +45,8 @@ function randomDelayMs(minSec: number, maxSec: number, demo: boolean) {
   return (lo + Math.random() * (hi - lo)) * 1000
 }
 
-function withinSendWindow(startH: number, endH: number): boolean {
+/** true se o horário local está dentro da janela [startH, endH). Exportado pra UI. */
+export function withinSendWindow(startH: number, endH: number): boolean {
   const h = new Date().getHours()
   if (startH === endH) return true
   if (startH < endH) return h >= startH && h < endH
@@ -107,11 +108,12 @@ export async function startQueueWorker() {
 
       if (
         !settings.demoMode &&
+        !settings.allowOutsideWindow &&
         !withinSendWindow(settings.windowStartHour, settings.windowEndHour)
       ) {
         safeLog(
           'warn',
-          `Fora da janela de envio (${settings.windowStartHour}h–${settings.windowEndHour}h). Pausado.`,
+          `Fora da janela de envio (${settings.windowStartHour}h–${settings.windowEndHour}h). Pausado. Ative “Permitir fora do horário” em Ajustes se quiser continuar.`,
         )
         pauseQueueWorker()
         continue

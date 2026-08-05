@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { assertWaAuth } from '../_wa-auth'
 
 function cfg() {
   const url = (process.env.EVOLUTION_API_URL || '').replace(/\/+$/, '')
@@ -26,6 +27,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(405).json({ error: 'Method not allowed' })
     return
   }
+  if (!assertWaAuth(req, res)) return
   const { url, key, instance } = cfg()
   if (!url || !key) {
     res.status(503).json({ error: true, message: 'Evolution não configurada' })

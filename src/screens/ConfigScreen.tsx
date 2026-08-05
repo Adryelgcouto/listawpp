@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
+  Check,
   ChevronDown,
   ChevronUp,
   KeyRound,
@@ -29,6 +30,11 @@ import {
   fetchQrCode,
   getConnectionState,
 } from '@/lib/evolution'
+import {
+  GEMINI_MODEL_FALLBACKS,
+  listGeminiModels,
+  type GeminiModelOption,
+} from '@/lib/gemini'
 import { isSafeEvolutionUrl } from '@/lib/security'
 import {
   hasServerWaApi,
@@ -38,8 +44,13 @@ import {
 import { useSettingsStore } from '@/stores/settings'
 import type { WaConnectionStatus } from '@/types'
 
-const MAX_QR_POLLS = 20
-const POLL_MS = 3000
+/** Status poll: só connectionState (não toca em /connect). */
+const STATUS_POLL_MS = 4000
+/** QR /connect no máximo a cada 15s — chamar connect a cada 3s derruba Baileys. */
+const QR_REFRESH_MS = 15_000
+const MAX_QR_POLLS = 45
+/** Health check depois de conectado (sem /connect). */
+const HEALTH_MS = 45_000
 
 function missingSetupMessage(s: {
   evolutionUrl: string
@@ -72,9 +83,20 @@ export function ConfigScreen() {
   const [polling, setPolling] = useState(false)
   const [pollCount, setPollCount] = useState(0)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [savedFlash, setSavedFlash] = useState(false)
+  const [geminiModels, setGeminiModels] = useState<GeminiModelOption[]>(
+    GEMINI_MODEL_FALLBACKS,
+  )
+  const [geminiModelsHint, setGeminiModelsHint] = useState<string | null>(null)
+  const [loadingModels, setLoadingModels] = useState(false)
   const pollTimer = useRef<number | null>(null)
+  const healthTimer = useRef<number | null>(null)
   const pollCountRef = useRef(0)
   const abortRef = useRef(false)
+  const lastQrAtRef = useRef(0)
+  const hasQrRef = useRef(false)
+  const savedFlashTimer = useRef<number | null>(null)
+  const lastOpenRef = useRef(false)
 
   const stopPolling = useCallback(() => {
     abortRef.current = true
@@ -85,7 +107,56 @@ export function ConfigScreen() {
     setPolling(false)
   }, [])
 
-  useEffect(() => () => stopPolling(), [stopPolling])
+  const stopHealth = useCallback(() => {
+    if (healthTimer.current != null) {
+      window.clearTimeout(healthTimer.current)
+      healthTimer.current = null
+    }
+  }, [])
+
+  useEffect(
+    () => () => {
+      stopPolling()
+      stopHealth()
+      if (savedFlashTimer.current != null) {
+        window.clearTimeout(savedFlashTimer.current)
+      }
+    },
+    [stopPolling, stopHealth],
+  )
+
+  const markSaved = useCallback(() => {
+    setSavedFlash(true)
+    if (savedFlashTimer.current != null) {
+      window.clearTimeout(savedFlashTimer.current)
+    }
+    savedFlashTimer.current = window.setTimeout(() => setSavedFlash(false), 2200)
+  }, [])
+
+  const persistSettings = useCallback(
+    (patch: Parameters<typeof settings.setSettings>[0]) => {
+      settings.setSettings(patch)
+      markSaved()
+    },
+    [settings, markSaved],
+  )
+
+  const mapServerStatus = (raw: string | undefined): WaConnectionStatus => {
+    const s = String(raw || '').toLowerCase()
+    if (s === 'open' || s === 'connected') return 'open'
+    if (
+      s === 'connecting' ||
+      s === 'qr' ||
+      s === 'pair' ||
+      s === 'pairing' ||
+      s === 'refused'
+    )
+      return 'connecting'
+    if (s === 'close' || s === 'closed' || s === 'disconnected' || s === 'logout')
+      return 'close'
+    if (s === 'error') return 'error'
+    return 'unknown'
+  }
 
   const refreshStatus = useCallback(async () => {
     if (settings.demoMode) {
@@ -93,6 +164,39 @@ export function ConfigScreen() {
       setWaError(null)
       return 'open' as WaConnectionStatus
     }
+
+    // Produção (Vercel): status server-side — não depende de key no browser
+    if (hasServerWaApi()) {
+      try {
+        const st = await serverWaStatus()
+        if (st.error && st.message) {
+          // não derruba "open" por erro transitório de rede
+          if (lastOpenRef.current) {
+            setWaError(st.message)
+            return 'open' as WaConnectionStatus
+          }
+          setWaStatus('error')
+          setWaError(st.message)
+          return 'error' as WaConnectionStatus
+        }
+        const status = mapServerStatus(st.status)
+        if (status === 'open') lastOpenRef.current = true
+        else if (status === 'close') lastOpenRef.current = false
+        setWaStatus(status)
+        setWaError(null)
+        return status
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (lastOpenRef.current) {
+          setWaError(`Checagem falhou (mantendo conectado): ${msg}`)
+          return 'open' as WaConnectionStatus
+        }
+        setWaStatus('error')
+        setWaError(msg)
+        return 'error' as WaConnectionStatus
+      }
+    }
+
     const missing = missingSetupMessage(settings)
     if (missing) {
       setWaStatus('error')
@@ -104,6 +208,13 @@ export function ConfigScreen() {
       settings.evolutionApiKey,
       settings.evolutionInstance,
     )
+    if (res.status === 'open') lastOpenRef.current = true
+    else if (res.status === 'close') lastOpenRef.current = false
+    // sticky open em erro transitório
+    if (res.status === 'error' && lastOpenRef.current) {
+      setWaError(res.error ?? 'Falha transitória')
+      return 'open' as WaConnectionStatus
+    }
     setWaStatus(res.status)
     setWaError(res.error ?? null)
     return res.status
@@ -114,16 +225,68 @@ export function ConfigScreen() {
     settings.evolutionInstance,
   ])
 
+  // Status inicial + health periódico DEPOIS de open — só connectionState
   useEffect(() => {
-    if (!settings.demoMode) void refreshStatus()
-  }, [refreshStatus, settings.demoMode])
+    if (settings.demoMode) return
+    void refreshStatus()
+  }, [settings.demoMode]) // eslint-disable-line react-hooks/exhaustive-deps -- evita spam a cada tecla
+
+  useEffect(() => {
+    stopHealth()
+    if (settings.demoMode || waStatus !== 'open' || polling) return
+    const loop = () => {
+      healthTimer.current = window.setTimeout(() => {
+        void refreshStatus().finally(() => {
+          if (!abortRef.current) loop()
+        })
+      }, HEALTH_MS)
+    }
+    loop()
+    return () => stopHealth()
+  }, [waStatus, settings.demoMode, polling, refreshStatus, stopHealth])
+
+  // Lista modelos Gemini quando a key muda (debounce)
+  useEffect(() => {
+    const key = settings.geminiApiKey.trim()
+    if (!key) {
+      setGeminiModels(GEMINI_MODEL_FALLBACKS)
+      setGeminiModelsHint(null)
+      return
+    }
+    let cancelled = false
+    const t = window.setTimeout(() => {
+      setLoadingModels(true)
+      void listGeminiModels(key).then((r) => {
+        if (cancelled) return
+        setGeminiModels(r.models)
+        setGeminiModelsHint(r.error ?? (r.source === 'api' ? null : null))
+        setLoadingModels(false)
+        // se modelo atual não está na lista, mantém mas garante opção
+        if (
+          settings.geminiModel &&
+          !r.models.some((m) => m.id === settings.geminiModel)
+        ) {
+          setGeminiModels([
+            { id: settings.geminiModel, label: `${settings.geminiModel} (atual)` },
+            ...r.models,
+          ])
+        }
+      })
+    }, 500)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [settings.geminiApiKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Fluxo principal: um botão. Na Vercel usa /api/wa (chave no servidor). */
   const connectWhatsApp = async () => {
     stopPolling()
+    stopHealth()
     setWaError(null)
     setQrDataUrl(null)
     setPairingCode(null)
+    lastQrAtRef.current = 0
 
     if (settings.demoMode) {
       settings.setSettings({ demoMode: false })
@@ -132,6 +295,7 @@ export function ConfigScreen() {
     setPolling(true)
     abortRef.current = false
     pollCountRef.current = 0
+    hasQrRef.current = false
     setPollCount(0)
     setWaStatus('connecting')
 
@@ -164,6 +328,16 @@ export function ConfigScreen() {
       }
     }
 
+    // Se já está open, não regenera QR (evita desconectar)
+    const first = await refreshStatus()
+    if (first === 'open') {
+      stopPolling()
+      setQrDataUrl(null)
+      setPairingCode(null)
+      toast.success('WhatsApp já estava conectado')
+      return
+    }
+
     const tick = async () => {
       if (abortRef.current) return
       if (pollCountRef.current >= MAX_QR_POLLS) {
@@ -177,12 +351,17 @@ export function ConfigScreen() {
 
       pollCountRef.current += 1
       setPollCount(pollCountRef.current)
+      const now = Date.now()
+      const needQr =
+        !hasQrRef.current || now - lastQrAtRef.current >= QR_REFRESH_MS
 
       try {
         if (useServer) {
           const st = await serverWaStatus()
-          const s = String(st.status || '').toLowerCase()
-          if (s === 'open' || s === 'connected') {
+          const s = mapServerStatus(st.status)
+          if (s === 'open') {
+            lastOpenRef.current = true
+            hasQrRef.current = false
             setWaStatus('open')
             setQrDataUrl(null)
             setPairingCode(null)
@@ -191,15 +370,36 @@ export function ConfigScreen() {
             toast.success('WhatsApp conectado!')
             return
           }
-          const qr = await serverWaQr()
-          if (qr.qr) {
-            setQrDataUrl(qr.qr)
-            setWaStatus('connecting')
-            setWaError(null)
+          if (st.error && st.message && !needQr) {
+            setWaError(st.message)
           }
-          if (qr.pairingCode) setPairingCode(qr.pairingCode)
-          if (!qr.ok && qr.message && !qr.qr) {
-            setWaError(qr.message)
+          // Só /connect com throttle — chamar a cada 3s derruba a sessão
+          if (needQr) {
+            lastQrAtRef.current = now
+            const qr = await serverWaQr()
+            if ((qr as { status?: string }).status === 'open') {
+              lastOpenRef.current = true
+              hasQrRef.current = false
+              setWaStatus('open')
+              setQrDataUrl(null)
+              setPairingCode(null)
+              setWaError(null)
+              stopPolling()
+              toast.success('WhatsApp conectado!')
+              return
+            }
+            if (qr.qr) {
+              hasQrRef.current = true
+              setQrDataUrl(qr.qr)
+              setWaStatus('connecting')
+              setWaError(null)
+            }
+            if (qr.pairingCode) setPairingCode(qr.pairingCode)
+            if (!qr.ok && qr.message && !qr.qr) {
+              setWaError(qr.message)
+            }
+          } else {
+            setWaStatus(s === 'close' ? 'connecting' : s)
           }
         } else {
           const state = await getConnectionState(
@@ -208,6 +408,8 @@ export function ConfigScreen() {
             settings.evolutionInstance,
           )
           if (state.status === 'open') {
+            lastOpenRef.current = true
+            hasQrRef.current = false
             setWaStatus('open')
             setQrDataUrl(null)
             setPairingCode(null)
@@ -216,27 +418,47 @@ export function ConfigScreen() {
             toast.success('WhatsApp conectado!')
             return
           }
-          const qr = await fetchQrCode(
-            settings.evolutionUrl,
-            settings.evolutionApiKey,
-            settings.evolutionInstance,
-          )
-          if (qr.qr) {
-            setQrDataUrl(qr.qr)
-            setWaStatus('connecting')
-            setWaError(null)
+          if (needQr) {
+            lastQrAtRef.current = now
+            const qr = await fetchQrCode(
+              settings.evolutionUrl,
+              settings.evolutionApiKey,
+              settings.evolutionInstance,
+            )
+            if (qr.alreadyOpen) {
+              lastOpenRef.current = true
+              hasQrRef.current = false
+              setWaStatus('open')
+              setQrDataUrl(null)
+              setPairingCode(null)
+              setWaError(null)
+              stopPolling()
+              toast.success('WhatsApp conectado!')
+              return
+            }
+            if (qr.qr) {
+              hasQrRef.current = true
+              setQrDataUrl(qr.qr)
+              setWaStatus('connecting')
+              setWaError(null)
+            }
+            if (qr.pairingCode) setPairingCode(qr.pairingCode)
+            if (!qr.qr && !qr.pairingCode && qr.error) setWaError(qr.error)
+          } else {
+            setWaStatus(
+              state.status === 'close' ? 'connecting' : state.status,
+            )
           }
-          if (qr.pairingCode) setPairingCode(qr.pairingCode)
-          if (!qr.qr && !qr.pairingCode && qr.error) setWaError(qr.error)
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        // não flipa pra error se já tem QR na tela — mantém tentando
         setWaError(msg)
-        setWaStatus('error')
+        if (!hasQrRef.current) setWaStatus('error')
       }
 
       if (abortRef.current) return
-      pollTimer.current = window.setTimeout(() => void tick(), POLL_MS)
+      pollTimer.current = window.setTimeout(() => void tick(), STATUS_POLL_MS)
     }
 
     await tick()
@@ -248,6 +470,15 @@ export function ConfigScreen() {
         title="Ajustes"
         eyebrow="Sistema"
         subtitle="Evolution, Gemini e anti-ban"
+        right={
+          savedFlash ? (
+            <Badge tone="success">
+              <Check size={12} /> Salvo
+            </Badge>
+          ) : (
+            <Badge tone="neutral">auto-save</Badge>
+          )
+        }
       />
 
       {/* —— Conectar WhatsApp (foco do usuário) —— */}
@@ -519,20 +750,20 @@ export function ConfigScreen() {
             <Field
               label="URL da Evolution (VSB)"
               value={settings.evolutionUrl}
-              onChange={(v) => settings.setSettings({ evolutionUrl: v })}
+              onChange={(v) => persistSettings({ evolutionUrl: v })}
               placeholder="https://wpp.viversemprebemvsb.com"
             />
             <Field
               label="Chave master (EVOLUTION_API_AUTH_KEY)"
               value={settings.evolutionApiKey}
-              onChange={(v) => settings.setSettings({ evolutionApiKey: v })}
+              onChange={(v) => persistSettings({ evolutionApiKey: v })}
               placeholder="Cole a chave do servidor VSB"
               type="password"
             />
             <Field
               label="Nome da instância (nova)"
               value={settings.evolutionInstance}
-              onChange={(v) => settings.setSettings({ evolutionInstance: v })}
+              onChange={(v) => persistSettings({ evolutionInstance: v })}
               placeholder="lista-zap"
             />
             <p
@@ -545,15 +776,29 @@ export function ConfigScreen() {
             >
               Não use nomes de canal do VSB (vsb-*-atd / vsb-*-txn). Lista Zap
               usa a instância <strong>lista-zap</strong> só pra este app.
+              Na Vercel a chave fica no servidor — aqui só é preciso em dev local.
+            </p>
+            <p
+              style={{
+                margin: '0 0 12px',
+                fontSize: 12,
+                color: 'var(--color-text-muted)',
+                lineHeight: 1.45,
+              }}
+            >
+              Salva sozinho neste aparelho (localStorage). Não precisa de botão.
+              {savedFlash ? ' · ✓ gravado agora' : ''}
             </p>
             <Toggle
               label="Modo demo (sem WhatsApp real)"
               description="Simula envios. Desliga sozinho ao tocar em Conectar WhatsApp."
               checked={settings.demoMode}
               onChange={(v) => {
-                settings.setSettings({ demoMode: v })
+                persistSettings({ demoMode: v })
                 if (v) {
                   stopPolling()
+                  hasQrRef.current = false
+                  lastOpenRef.current = false
                   setQrDataUrl(null)
                   setPairingCode(null)
                   setWaStatus('unknown')
@@ -569,16 +814,69 @@ export function ConfigScreen() {
         <Field
           label="API key"
           value={settings.geminiApiKey}
-          onChange={(v) => settings.setSettings({ geminiApiKey: v })}
+          onChange={(v) => persistSettings({ geminiApiKey: v })}
           type="password"
-          placeholder="AIza…"
+          placeholder="AIza… (aistudio.google.com/apikey)"
         />
-        <Field
-          label="Modelo"
-          value={settings.geminiModel}
-          onChange={(v) => settings.setSettings({ geminiModel: v })}
-          placeholder="gemini-2.0-flash"
-        />
+        <div style={{ marginBottom: 10 }}>
+          <Label>Modelo</Label>
+          <select
+            className="field"
+            value={settings.geminiModel}
+            onChange={(e) => persistSettings({ geminiModel: e.target.value })}
+            style={{
+              width: '100%',
+              minHeight: 46,
+              padding: '11px 13px',
+              background: 'var(--color-bg-elevated)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 12,
+              color: 'var(--color-text)',
+              outline: 'none',
+            }}
+          >
+            {geminiModels.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+          <p
+            style={{
+              margin: '8px 0 0',
+              fontSize: 12,
+              color: 'var(--color-text-muted)',
+              lineHeight: 1.45,
+            }}
+          >
+            {loadingModels
+              ? 'Carregando modelos da sua chave…'
+              : geminiModelsHint
+                ? geminiModelsHint
+                : settings.geminiApiKey.trim()
+                  ? `${geminiModels.length} modelo(s) · salva sozinho neste aparelho`
+                  : 'Cole a API key pra listar os modelos da conta (senão usa lista padrão).'}
+            {savedFlash ? ' · ✓ gravado' : ''}
+          </p>
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<RefreshCw size={14} />}
+          disabled={!settings.geminiApiKey.trim() || loadingModels}
+          onClick={() => {
+            setLoadingModels(true)
+            void listGeminiModels(settings.geminiApiKey).then((r) => {
+              setGeminiModels(r.models)
+              setGeminiModelsHint(r.error ?? null)
+              setLoadingModels(false)
+              if (r.source === 'api') toast.success(`${r.models.length} modelos listados`)
+              else toast.message(r.error || 'Lista padrão')
+            })
+          }}
+        >
+          Atualizar lista de modelos
+        </Button>
       </Section>
 
       <Section title="Anti-ban / cadência">
@@ -671,17 +969,26 @@ export function ConfigScreen() {
             }
           />
         </div>
+        <div style={{ marginTop: 12 }}>
+          <Toggle
+            label="Permitir fora do horário"
+            description={`Envia mesmo fora da janela ${settings.windowStartHour}h–${settings.windowEndHour}h. Aumenta risco de bloqueio — use só quando precisar.`}
+            checked={settings.allowOutsideWindow}
+            onChange={(v) => settings.setSettings({ allowOutsideWindow: v })}
+          />
+        </div>
         <p
           style={{
-            margin: '12px 0 0',
+            margin: '8px 0 0',
             fontSize: 12,
             color: 'var(--color-text-muted)',
             lineHeight: 1.45,
           }}
         >
           Em demo os delays ficam curtos (1–3s). Em live: delay aleatório entre
-          min/max, pausa entre lotes e só envia na janela de horário. Ajustar
-          números manualmente vira modo <strong>Manual</strong>.
+          min/max, pausa entre lotes e, se esta opção estiver desligada, só
+          envia na janela de horário. Ajustar números manualmente vira modo{' '}
+          <strong>Manual</strong>.
         </p>
       </Section>
 

@@ -10,6 +10,104 @@ import {
   stripCpfEverywhere,
 } from './security'
 
+/** Modelos estáveis pra OCR/rewrite — fallback se a listagem da API falhar. */
+export const GEMINI_MODEL_FALLBACKS: Array<{ id: string; label: string }> = [
+  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (recomendado)' },
+  { id: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite (rápido)' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+  { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
+  { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+]
+
+export type GeminiModelOption = { id: string; label: string }
+
+/**
+ * Lista modelos com generateContent na conta da API key.
+ * Preferência: flash/pro recentes. Em falha devolve fallbacks.
+ */
+export async function listGeminiModels(
+  apiKey: string,
+): Promise<{ models: GeminiModelOption[]; error?: string; source: 'api' | 'fallback' }> {
+  if (!apiKey.trim()) {
+    return { models: GEMINI_MODEL_FALLBACKS, source: 'fallback' }
+  }
+  registerRuntimeSecret(apiKey)
+  try {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey.trim())}&pageSize=100`
+    const res = await fetch(endpoint, {
+      method: 'GET',
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) {
+      const hint =
+        res.status === 400 || res.status === 403
+          ? 'API key inválida ou sem permissão'
+          : `HTTP ${res.status}`
+      return {
+        models: GEMINI_MODEL_FALLBACKS,
+        source: 'fallback',
+        error: `Não listei modelos (${hint}). Usando lista padrão.`,
+      }
+    }
+    const data = (await res.json()) as {
+      models?: Array<{
+        name?: string
+        displayName?: string
+        supportedGenerationMethods?: string[]
+      }>
+    }
+    const models: GeminiModelOption[] = (data.models ?? [])
+      .filter((m) =>
+        (m.supportedGenerationMethods ?? []).includes('generateContent'),
+      )
+      .map((m) => {
+        const raw = (m.name ?? '').replace(/^models\//, '')
+        return {
+          id: raw,
+          label: m.displayName ? `${m.displayName} (${raw})` : raw,
+        }
+      })
+      .filter((m) => m.id.length > 0)
+      // flash/pro primeiro; evita embedding/tts
+      .filter(
+        (m) =>
+          /gemini/i.test(m.id) &&
+          !/embed|aqa|tts|image-generation|robotics/i.test(m.id),
+      )
+      .sort((a, b) => {
+        const score = (id: string) => {
+          if (id.includes('2.5-flash')) return 0
+          if (id.includes('2.0-flash') && !id.includes('lite')) return 1
+          if (id.includes('2.0-flash-lite')) return 2
+          if (id.includes('2.5-pro')) return 3
+          if (id.includes('flash')) return 4
+          if (id.includes('pro')) return 5
+          return 9
+        }
+        return score(a.id) - score(b.id) || a.id.localeCompare(b.id)
+      })
+
+    if (models.length === 0) {
+      return {
+        models: GEMINI_MODEL_FALLBACKS,
+        source: 'fallback',
+        error: 'API não retornou modelos de texto. Usando lista padrão.',
+      }
+    }
+    return { models, source: 'api' }
+  } catch (err) {
+    return {
+      models: GEMINI_MODEL_FALLBACKS,
+      source: 'fallback',
+      error: sanitizeErrorMessage(
+        err instanceof Error ? err.message : 'Falha ao listar modelos',
+        80,
+      ),
+    }
+  }
+}
+
 /**
  * H2: NÃO pedir CPF na visão. CPF fica só se o usuário digitar manualmente.
  * Imagem ainda vai ao Google se houver API key — UI deve avisar.

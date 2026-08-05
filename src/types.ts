@@ -75,6 +75,8 @@ export interface Settings {
   batchPauseSec: number
   windowStartHour: number
   windowEndHour: number
+  /** Se true, a fila envia mesmo fora da janela habitual */
+  allowOutsideWindow: boolean
   sendImage: boolean
   useGeminiRewrite: boolean
   commercialImageDataUrl: string | null
@@ -100,6 +102,7 @@ export const DEFAULT_SETTINGS: Settings = {
   batchPauseSec: 240,
   windowStartHour: 8,
   windowEndHour: 20,
+  allowOutsideWindow: false,
   sendImage: false,
   /** H2: rewrite Gemini é opt-in (default false) */
   useGeminiRewrite: false,

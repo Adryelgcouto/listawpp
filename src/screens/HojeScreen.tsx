@@ -27,6 +27,7 @@ import {
   pauseQueueWorker,
   startQueueWorker,
   stopQueueWorker,
+  withinSendWindow,
 } from '@/lib/queue-worker'
 import { queueStats, useQueueStore } from '@/stores/queue'
 import { useClientsStore } from '@/stores/clients'
@@ -49,6 +50,9 @@ export function HojeScreen() {
     nextPending?.name ?? 'Maria',
   )
   const latestLog = logs[0]
+  const outsideWindow =
+    !settings.demoMode &&
+    !withinSendWindow(settings.windowStartHour, settings.windowEndHour)
 
   // H5: carrega imagem do IndexedDB
   useEffect(() => {
@@ -205,6 +209,50 @@ export function HojeScreen() {
           </div>
         ) : null}
 
+        {outsideWindow ? (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: '10px 12px',
+              borderRadius: 12,
+              background: settings.allowOutsideWindow
+                ? 'var(--color-bg-elevated)'
+                : 'color-mix(in srgb, var(--color-warn) 12%, transparent)',
+              border: `1px solid ${
+                settings.allowOutsideWindow
+                  ? 'var(--color-border)'
+                  : 'color-mix(in srgb, var(--color-warn) 35%, transparent)'
+              }`,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 12.5,
+                color: 'var(--color-text-muted)',
+                lineHeight: 1.4,
+                marginBottom: 6,
+              }}
+            >
+              {settings.allowOutsideWindow
+                ? `Fora da janela habitual (${settings.windowStartHour}h–${settings.windowEndHour}h), mas permitido.`
+                : `Fora da janela habitual (${settings.windowStartHour}h–${settings.windowEndHour}h). A fila não envia até liberar.`}
+            </div>
+            <Toggle
+              label="Permitir fora do horário"
+              description="Risco maior de bloqueio. Pode desligar em Ajustes."
+              checked={settings.allowOutsideWindow}
+              onChange={(v) => {
+                settings.setSettings({ allowOutsideWindow: v })
+                if (v) {
+                  toast.success('Envio fora do horário liberado — toque em Iniciar')
+                } else {
+                  toast.message('Janela habitual reativada')
+                }
+              }}
+            />
+          </div>
+        ) : null}
+
         <div style={{ display: 'flex', gap: 8 }}>
           {!running ? (
             <Button
@@ -212,6 +260,12 @@ export function HojeScreen() {
               onClick={() => {
                 if (stats.pending === 0) {
                   toast.message('Fila vazia — carregue a lista demo ou escaneie')
+                  return
+                }
+                if (outsideWindow && !settings.allowOutsideWindow) {
+                  toast.error(
+                    `Fora da janela ${settings.windowStartHour}h–${settings.windowEndHour}h. Ative “Permitir fora do horário” acima.`,
+                  )
                   return
                 }
                 void startQueueWorker()

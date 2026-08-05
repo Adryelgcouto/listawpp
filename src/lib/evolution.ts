@@ -344,7 +344,22 @@ export async function fetchQrCode(
   url: string,
   apiKey: string,
   instance: string,
-): Promise<{ qr: string | null; pairingCode?: string | null; error?: string }> {
+): Promise<{
+  qr: string | null
+  pairingCode?: string | null
+  error?: string
+  alreadyOpen?: boolean
+}> {
+  // NUNCA chamar /connect se já open — Baileys derruba a sessão
+  const current = await getConnectionState(url, apiKey, instance)
+  if (current.status === 'open') {
+    return {
+      qr: null,
+      alreadyOpen: true,
+      error: 'WhatsApp já está conectado',
+    }
+  }
+
   // v1/v2: connect gera/atualiza QR; alguns usam qrcode
   const paths = [
     `/instance/connect/${encodeURIComponent(instance)}`,
@@ -373,8 +388,8 @@ export async function fetchQrCode(
       if (qr) return { qr, pairingCode: pairing }
       // às vezes connect devolve count sem base64 se já conectado
       const state = pickState(data)
-      if (state === 'open') {
-        return { qr: null, error: 'WhatsApp já está conectado' }
+      if (state === 'open' || state === 'connected') {
+        return { qr: null, alreadyOpen: true, error: 'WhatsApp já está conectado' }
       }
       if (pairing) {
         return { qr: null, pairingCode: pairing }

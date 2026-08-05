@@ -105,6 +105,7 @@ export const useSettingsStore = create<SettingsState>()(
         batchPauseSec: s.batchPauseSec,
         windowStartHour: s.windowStartHour,
         windowEndHour: s.windowEndHour,
+        allowOutsideWindow: s.allowOutsideWindow,
         sendImage: s.sendImage,
         useGeminiRewrite: s.useGeminiRewrite,
         // H5: nunca persistir imagem base64 no localStorage

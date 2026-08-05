@@ -64,6 +64,7 @@ export const SettingsPersistSchema = z.object({
   batchPauseSec: z.number().optional(),
   windowStartHour: z.number().optional(),
   windowEndHour: z.number().optional(),
+  allowOutsideWindow: z.boolean().optional(),
   sendImage: z.boolean().optional(),
   useGeminiRewrite: z.boolean().optional(),
   commercialImageDataUrl: z.string().nullable().optional(),
