@@ -86,8 +86,8 @@ export const DEFAULT_TEMPLATE =
 /** Default = 90% anti-ban (recomendado) */
 export const DEFAULT_SETTINGS: Settings = {
   demoMode: true,
-  /** URL pública HTTPS da Evolution (sempre online) — não use localhost no celular/trabalho */
-  evolutionUrl: '',
+  /** Evolution já na nuvem do VSB — só cria mais uma instância (lista-zap) */
+  evolutionUrl: 'https://wpp.viversemprebemvsb.com',
   evolutionApiKey: '',
   evolutionInstance: 'lista-zap',
   geminiApiKey: '',

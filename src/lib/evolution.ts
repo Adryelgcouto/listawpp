@@ -170,6 +170,90 @@ function pickQrFromPayload(data: unknown): string | null {
   return null
 }
 
+/**
+ * Cria instância na Evolution já hospedada (mesma do VSB).
+ * Idempotente: se já existe (403/409), trata como ok.
+ * Sem webhook — Lista Zap envia direto e lê status/QR.
+ */
+export async function createInstance(params: {
+  url: string
+  apiKey: string
+  instance: string
+}): Promise<{ ok: boolean; alreadyExisted?: boolean; error?: string }> {
+  const name = params.instance.trim()
+  if (!name) return { ok: false, error: 'Nome da instância vazio' }
+
+  try {
+    const res = await evoFetch(params.url, params.apiKey, '/instance/create', {
+      method: 'POST',
+      body: JSON.stringify({
+        instanceName: name,
+        integration: 'WHATSAPP-BAILEYS',
+        qrcode: true,
+      }),
+    })
+
+    if (res.ok) return { ok: true }
+
+    const text = await res.text().catch(() => '')
+    // já existe
+    if (res.status === 403 || res.status === 409) {
+      return { ok: true, alreadyExisted: true }
+    }
+    // alguns retornam 400 com "already"
+    if (/already|exist|já exist/i.test(text)) {
+      return { ok: true, alreadyExisted: true }
+    }
+    return {
+      ok: false,
+      error: sanitizeErrorMessage(hintFromBody(text, res.status)),
+    }
+  } catch (err) {
+    const e = err as EvolutionError
+    return {
+      ok: false,
+      error: sanitizeErrorMessage(e.message || 'Falha ao criar instância'),
+    }
+  }
+}
+
+/** Garante que a instância existe; se não, cria. */
+export async function ensureInstance(params: {
+  url: string
+  apiKey: string
+  instance: string
+}): Promise<{ ok: boolean; error?: string }> {
+  const state = await getConnectionState(
+    params.url,
+    params.apiKey,
+    params.instance,
+  )
+  // se respondeu open/close/connecting/unknown, a instância existe
+  if (state.status !== 'error') {
+    return { ok: true }
+  }
+  // 404 / not found → cria
+  if (
+    state.error &&
+    /404|não encontrada|not found|instância/i.test(state.error)
+  ) {
+    const created = await createInstance(params)
+    if (!created.ok) return { ok: false, error: created.error }
+    return { ok: true }
+  }
+  // erro de auth/rede — não tenta create
+  if (
+    state.error &&
+    /401|403|chave|API key|CORS|rede|Timeout|indispon/i.test(state.error)
+  ) {
+    return { ok: false, error: state.error }
+  }
+  // tenta create de qualquer forma (instância pode não existir)
+  const created = await createInstance(params)
+  if (created.ok) return { ok: true }
+  return { ok: false, error: created.error || state.error }
+}
+
 export async function getConnectionState(
   url: string,
   apiKey: string,

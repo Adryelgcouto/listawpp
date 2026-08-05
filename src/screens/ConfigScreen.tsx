@@ -24,7 +24,11 @@ import {
   formatDuration,
   type AntiBanPreset,
 } from '@/lib/anti-ban'
-import { fetchQrCode, getConnectionState } from '@/lib/evolution'
+import {
+  ensureInstance,
+  fetchQrCode,
+  getConnectionState,
+} from '@/lib/evolution'
 import { isSafeEvolutionUrl } from '@/lib/security'
 import { useSettingsStore } from '@/stores/settings'
 import type { WaConnectionStatus } from '@/types'
@@ -38,16 +42,16 @@ function missingSetupMessage(s: {
   evolutionInstance: string
 }): string | null {
   if (!s.evolutionUrl.trim()) {
-    return 'Falta a URL da Evolution na nuvem (https://…). Sem isso o site sozinho não fala com o WhatsApp.'
+    return 'Falta a URL da Evolution (padrão VSB: https://wpp.viversemprebemvsb.com).'
   }
   if (!s.evolutionApiKey.trim()) {
-    return 'Falta a chave secreta da Evolution (cole a chave real do painel, não o texto de exemplo).'
+    return 'Cole a chave master da Evolution do VSB (a mesma AUTHENTICATION_API_KEY / EVOLUTION_API_AUTH_KEY do servidor).'
   }
   if (!s.evolutionInstance.trim()) {
     return 'Falta o nome da instância (ex.: lista-zap).'
   }
   if (/localhost|127\.0\.0\.1/i.test(s.evolutionUrl)) {
-    return 'Localhost só funciona no mesmo PC. Pro site no trabalho/celular, use Evolution hospedada com URL https:// pública.'
+    return 'Use a Evolution da nuvem VSB (https://wpp.viversemprebemvsb.com), não localhost.'
   }
   const safe = isSafeEvolutionUrl(s.evolutionUrl)
   if (!safe.ok) return safe.reason ?? 'URL inválida'
@@ -140,6 +144,22 @@ export function ConfigScreen() {
     pollCountRef.current = 0
     setPollCount(0)
     setWaStatus('connecting')
+    toast.message('Garantindo instância na Evolution do VSB…')
+
+    // 1) cria instância lista-zap se ainda não existir (mesma Evolution da nuvem)
+    const ensured = await ensureInstance({
+      url: settings.evolutionUrl,
+      apiKey: settings.evolutionApiKey,
+      instance: settings.evolutionInstance,
+    })
+    if (!ensured.ok) {
+      stopPolling()
+      setShowAdvanced(true)
+      setWaStatus('error')
+      setWaError(ensured.error ?? 'Não deu pra criar/usar a instância')
+      toast.error(ensured.error ?? 'Falha na instância')
+      return
+    }
 
     const tick = async () => {
       if (abortRef.current) return
@@ -276,9 +296,9 @@ export function ConfigScreen() {
             lineHeight: 1.5,
           }}
         >
-          Você acessa o <strong>site de qualquer lugar</strong> (casa, trabalho,
-          celular). O que precisa ficar 24h online é só o servidor{' '}
-          <strong>Evolution na nuvem</strong> — não o seu PC de casa.
+          Usa a <strong>mesma Evolution do VSB</strong> (já na nuvem). O app só
+          cria a instância <strong>lista-zap</strong> e mostra o QR pra você
+          parear o número.
         </p>
         <ol
           style={{
@@ -290,15 +310,14 @@ export function ConfigScreen() {
           }}
         >
           <li>
-            Uma vez: subir Evolution na nuvem (VPS / Railway / EasyPanel etc.)
+            Em <strong>Configurar servidor</strong>: cole a chave master da
+            Evolution do VSB (uma vez)
           </li>
           <li>
-            Colar URL HTTPS + chave em <strong>Configurar servidor</strong>
+            Toque <strong>Conectar WhatsApp</strong> (cria a instância se
+            precisar)
           </li>
-          <li>
-            Toque <strong>Conectar WhatsApp</strong> → escanear QR no celular
-          </li>
-          <li>Pronto: lista-zap.vercel.app de qualquer rede, sem PC ligado</li>
+          <li>Escaneie o QR no celular → pronto</li>
         </ol>
 
         {waStatus === 'open' && !settings.demoMode ? (
@@ -486,26 +505,26 @@ export function ConfigScreen() {
                 lineHeight: 1.45,
               }}
             >
-              <strong>Não precisa de PC em casa ligado.</strong> O site (Vercel)
-              roda na nuvem. A Evolution também tem que rodar na nuvem, 24h — um
-              servidor barato. Aí você abre o site no trabalho, no celular, em
-              qualquer Wi‑Fi, e o WhatsApp continua conectado.
+              Mesma Evolution do Viver Sempre Bem. URL já vem preenchida. Só
+              falta a <strong>chave master</strong> (do servidor VSB —{' '}
+              <code>EVOLUTION_API_AUTH_KEY</code>). Instância nova:{' '}
+              <strong>lista-zap</strong> (não mexe nas do VSB).
             </p>
             <Field
-              label="URL da Evolution (HTTPS, na nuvem)"
+              label="URL da Evolution (VSB)"
               value={settings.evolutionUrl}
               onChange={(v) => settings.setSettings({ evolutionUrl: v })}
-              placeholder="https://evo.seudominio.com"
+              placeholder="https://wpp.viversemprebemvsb.com"
             />
             <Field
-              label="Chave secreta (API key)"
+              label="Chave master (EVOLUTION_API_AUTH_KEY)"
               value={settings.evolutionApiKey}
               onChange={(v) => settings.setSettings({ evolutionApiKey: v })}
-              placeholder="Cole a chave real do painel da Evolution"
+              placeholder="Cole a chave do servidor VSB"
               type="password"
             />
             <Field
-              label="Nome da instância"
+              label="Nome da instância (nova)"
               value={settings.evolutionInstance}
               onChange={(v) => settings.setSettings({ evolutionInstance: v })}
               placeholder="lista-zap"
@@ -518,9 +537,8 @@ export function ConfigScreen() {
                 lineHeight: 1.45,
               }}
             >
-              Exemplos de host: Railway, Render, EasyPanel, VPS (~R$20–40/mês).
-              URL tem que ser <strong>https://…</strong> pública. Localhost só
-              serve pra dev no mesmo PC — no site da Vercel não funciona.
+              Não use nomes de canal do VSB (vsb-*-atd / vsb-*-txn). Lista Zap
+              usa a instância <strong>lista-zap</strong> só pra este app.
             </p>
             <Toggle
               label="Modo demo (sem WhatsApp real)"
