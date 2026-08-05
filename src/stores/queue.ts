@@ -6,6 +6,11 @@ import { sanitizeLogLine, safeMessagePreview } from '@/lib/security'
 import { isValidBrPhone } from '@/lib/phone'
 import { QueuePersistSchema, safeParsePersist } from '@/lib/schemas'
 import { sanitizePersonName } from '@/lib/security'
+import {
+  mergeImportedContacts,
+  type MergeResult,
+  type TransferContact,
+} from '@/lib/transfer'
 
 interface QueueState {
   items: QueueItem[]
@@ -17,6 +22,11 @@ interface QueueState {
   lastBatchCount: number
 
   enqueueClients: (clients: Client[]) => number
+  /** Importa backup de outro aparelho — 'sent' de qualquer lado nunca vira pendente. */
+  importContacts: (
+    contatos: TransferContact[],
+    clientIdForPhone: (phone: string) => string | undefined,
+  ) => MergeResult
   setRunning: (v: boolean) => void
   setPaused: (v: boolean) => void
   updateItem: (id: string, patch: Partial<QueueItem>) => void
@@ -108,6 +118,22 @@ export const useQueueStore = create<QueueState>()(
             i.id === id ? { ...i, status: 'skipped' as const } : i,
           ),
         })),
+
+      importContacts: (contatos, clientIdForPhone) => {
+        const stamp = new Date().toISOString()
+        const result = mergeImportedContacts(get().items, contatos, (c) => ({
+          id: createId('q'),
+          clientId: clientIdForPhone(c.telefone) ?? '',
+          name: sanitizePersonName(c.nome) || c.nome,
+          phone: c.telefone,
+          status: c.status,
+          createdAt: stamp,
+          sentAt: c.enviadoEm,
+          attempts: 0,
+        }))
+        set({ items: result.items })
+        return result
+      },
 
       resetFailedToPending: () =>
         set((s) => ({

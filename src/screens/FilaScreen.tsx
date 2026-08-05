@@ -1,4 +1,6 @@
+import { useRef } from 'react'
 import {
+  Download,
   Inbox,
   Pause,
   Play,
@@ -6,6 +8,7 @@ import {
   SkipForward,
   Square,
   Trash2,
+  Upload,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/AppShell'
@@ -20,7 +23,17 @@ import {
   startQueueWorker,
   stopQueueWorker,
 } from '@/lib/queue-worker'
+import {
+  buildPendingCsv,
+  buildTransferFile,
+  downloadTextFile,
+  parseTransferFile,
+  pendingItems,
+  serializeTransferFile,
+  transferFileName,
+} from '@/lib/transfer'
 import { queueStats, useQueueStore } from '@/stores/queue'
+import { useClientsStore } from '@/stores/clients'
 import { useSettingsStore } from '@/stores/settings'
 import type { QueueItem, QueueItemStatus } from '@/types'
 
@@ -33,8 +46,11 @@ export function FilaScreen() {
   const resetFailedToPending = useQueueStore((s) => s.resetFailedToPending)
   const clearQueue = useQueueStore((s) => s.clearQueue)
   const clearLogs = useQueueStore((s) => s.clearLogs)
+  const importContacts = useQueueStore((s) => s.importContacts)
+  const upsertFromRows = useClientsStore((s) => s.upsertFromRows)
   const settings = useSettingsStore()
   const stats = queueStats(items)
+  const backupRef = useRef<HTMLInputElement>(null)
 
   const progress =
     stats.total === 0
@@ -45,6 +61,85 @@ export function FilaScreen() {
   const nextText = firstPending
     ? applyTemplate(settings.messageTemplate, firstPending.name)
     : null
+
+  const faltam = pendingItems(items).length
+
+  const exportPendingCsv = () => {
+    if (faltam === 0) {
+      toast.message('Não falta ninguém na fila')
+      return
+    }
+    const now = new Date().toISOString()
+    downloadTextFile(
+      transferFileName('pendentes', now, 'csv'),
+      buildPendingCsv(items),
+      'text/csv',
+    )
+    toast.success(`${faltam} contato(s) que ainda faltam exportados`)
+  }
+
+  const exportBackup = () => {
+    if (items.length === 0) {
+      toast.message('Fila vazia — nada pra transferir')
+      return
+    }
+    const now = new Date().toISOString()
+    downloadTextFile(
+      transferFileName('fila', now, 'json'),
+      serializeTransferFile(
+        buildTransferFile({
+          items,
+          messageTemplate: settings.messageTemplate,
+          now,
+        }),
+      ),
+      'application/json',
+    )
+    toast.success('Backup da fila exportado (com quem já recebeu)')
+  }
+
+  const importBackup = async (files: FileList | null) => {
+    const file = files?.[0]
+    if (!file) return
+    try {
+      const parsed = parseTransferFile(await file.text())
+      if (!parsed.ok) {
+        toast.error(parsed.error)
+        return
+      }
+
+      // cria/atualiza os clientes primeiro, pra fila apontar pro cadastro certo
+      const clients = upsertFromRows(
+        parsed.file.contatos.map((c, i) => ({
+          id: `imp-${i}`,
+          nome: c.nome,
+          telefone: c.telefone,
+          cpf: '',
+          confidence: 1,
+          uncertain: false,
+          selected: true,
+        })),
+      )
+      const idByPhone = new Map(clients.map((c) => [c.phone, c.id]))
+
+      const r = importContacts(parsed.file.contatos, (p) => idByPhone.get(p))
+      if (parsed.file.mensagem && parsed.file.mensagem !== settings.messageTemplate) {
+        settings.setSettings({ messageTemplate: parsed.file.mensagem })
+      }
+      toast.success(
+        `${r.novos} novo(s), ${r.atualizados} atualizado(s) · ${r.jaEnviados} já enviado(s) não vão de novo`,
+      )
+      if (parsed.ignorados > 0) {
+        toast.message(`${parsed.ignorados} linha(s) sem telefone válido ignorada(s)`)
+      }
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? `Falha ao ler backup: ${e.message}` : 'Falha ao ler backup',
+      )
+    } finally {
+      if (backupRef.current) backupRef.current.value = ''
+    }
+  }
 
   return (
     <div>
@@ -191,6 +286,77 @@ export function FilaScreen() {
             Limpar
           </Button>
         </div>
+      </Card>
+
+      <Card style={{ marginBottom: 12, padding: 14 }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            gap: 8,
+            marginBottom: 4,
+          }}
+        >
+          <div className="eyebrow" style={{ margin: 0 }}>
+            Levar pra outro celular
+          </div>
+          <span
+            style={{
+              fontSize: 11,
+              color: 'var(--color-text-faint)',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            faltam {faltam}
+          </span>
+        </div>
+        <p
+          style={{
+            margin: '0 0 10px',
+            fontSize: 11.5,
+            color: 'var(--color-text-muted)',
+            lineHeight: 1.45,
+          }}
+        >
+          O backup leva a fila inteira com quem já recebeu — ao importar no outro
+          aparelho, quem já foi enviado não vai de novo. Sem CPF e sem chave de API.
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<Download size={14} />}
+            onClick={exportBackup}
+            style={{ flex: 1 }}
+          >
+            Exportar backup
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<Upload size={14} />}
+            onClick={() => backupRef.current?.click()}
+            style={{ flex: 1 }}
+          >
+            Importar backup
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Download size={14} />}
+            onClick={exportPendingCsv}
+          >
+            Só quem falta (CSV)
+          </Button>
+        </div>
+        <input
+          ref={backupRef}
+          type="file"
+          accept=".json,application/json"
+          hidden
+          onChange={(e) => void importBackup(e.target.files)}
+        />
       </Card>
 
       {nextText && firstPending ? (
