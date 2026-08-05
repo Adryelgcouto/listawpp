@@ -1,0 +1,291 @@
+@import "tailwindcss";
+
+/*
+  Lista Zap — visual system
+  Field kit for a closer: warm zinc black, highlighter mark, editorial type.
+  No green-gradient SaaS. WhatsApp green only as semantic “sent/live”.
+*/
+
+@theme {
+  /* M3: system fonts only — sem Google Fonts (exfil / CSP) */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-bg: #09090b;
+  --color-bg-elevated: #0e0e11;
+  --color-surface: #121215;
+  --color-surface-2: #18181c;
+  --color-surface-3: #222228;
+  --color-border: rgba(255, 255, 255, 0.075);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-text: #f4f4f5;
+  --color-text-muted: #a1a1aa;
+  --color-text-faint: #71717a;
+
+  /* Highlighter brand — not WhatsApp green */
+  --color-accent: #d6ff4b;
+  --color-accent-dim: #b8e030;
+  --color-accent-ink: #12160a;
+  --color-accent-soft: rgba(214, 255, 75, 0.12);
+
+  /* Semantic */
+  --color-wa: #2ee06a;
+  --color-wa-soft: rgba(46, 224, 106, 0.12);
+  --color-warn: #f5b942;
+  --color-warn-soft: rgba(245, 185, 66, 0.12);
+  --color-danger: #ff6b6b;
+  --color-danger-soft: rgba(255, 107, 107, 0.12);
+  --color-info: #7db7ff;
+  --color-info-soft: rgba(125, 183, 255, 0.12);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    background: var(--color-bg);
+    color: var(--color-text);
+    line-height: 1.45;
+    overflow-x: hidden;
+    font-feature-settings: "ss01" on, "cv11" on;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: var(--color-accent);
+    color: var(--color-accent-ink);
+  }
+
+  :root {
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 72px;
+    --banner-h: 26px;
+  }
+
+  img {
+    outline: 1px solid rgba(255, 255, 255, 0.08);
+    outline-offset: -1px;
+  }
+}
+
+@layer utilities {
+  .tap {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Shell */
+.app-shell {
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  background:
+    radial-gradient(90% 50% at 50% -8%, rgba(214, 255, 75, 0.07), transparent 55%),
+    radial-gradient(70% 40% at 100% 80%, rgba(46, 224, 106, 0.04), transparent 50%),
+    var(--color-bg);
+  position: relative;
+  overflow-x: hidden;
+}
+
+.app-main {
+  padding: 10px 18px calc(var(--nav-h) + var(--safe-bottom) + 16px);
+  min-height: 100dvh;
+}
+
+/* Typography helpers */
+.eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+.display-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  text-wrap: balance;
+}
+
+/* Hairline section */
+.hairline {
+  height: 1px;
+  background: var(--color-border);
+  border: 0;
+  margin: 0;
+}
+
+/* Stat strip (not card grid) */
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.stat-strip > * {
+  padding: 14px 8px 12px;
+  text-align: center;
+  border-right: 1px solid var(--color-border);
+  min-width: 0;
+}
+
+.stat-strip > *:last-child {
+  border-right: none;
+}
+
+.stat-value {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+/* Floating dock */
+.dock {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(10px + var(--safe-bottom));
+  width: min(402px, calc(100% - 20px));
+  height: 60px;
+  padding: 6px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  z-index: 50;
+  background: rgba(18, 18, 21, 0.82);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 22px;
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(0, 0, 0, 0.2) inset;
+}
+
+.dock-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 48px;
+  border-radius: 16px;
+  text-decoration: none;
+  color: var(--color-text-faint);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 120ms ease;
+}
+
+.dock-item:active {
+  transform: scale(0.96);
+}
+
+.dock-item[data-active="true"] {
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
+}
+
+/* Skeleton */
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface) 25%,
+    var(--color-surface-2) 50%,
+    var(--color-surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--radius-md);
+}
+
+/* Focus ring utility for inputs */
+.field:focus {
+  border-color: rgba(214, 255, 75, 0.45) !important;
+  box-shadow: 0 0 0 3px rgba(214, 255, 75, 0.1);
+}

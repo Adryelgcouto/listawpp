@@ -1,0 +1,35 @@
+# deps / build
+node_modules
+dist
+dist-ssr
+*.local
+
+# logs / runtime
+.dev-server.log
+.dev-server.pid
+logs
+*.log
+npm-debug.log*
+
+# editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# env
+.env
+.env.*
+!.env.example
+
+# typescript
+*.tsbuildinfo
+
+# debug / screenshots locais
+tmp-*.png
+tmp-*.jpg
+tmp-debug-*
+tmp-shot-*
+/tmp-*.txt
+playwright-report
+test-results
