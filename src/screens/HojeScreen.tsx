@@ -16,7 +16,11 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Label, TextArea } from '@/components/ui/Input'
 import { Toggle } from '@/components/ui/Toggle'
-import { applyTemplate } from '@/lib/message'
+import {
+  applyTemplate,
+  formatAsBlocks,
+  normalizeOutboundText,
+} from '@/lib/message'
 import { seedDemoWorkflow } from '@/lib/seed-demo'
 import {
   compressImageFile,
@@ -321,6 +325,40 @@ export function HojeScreen() {
           onChange={(e) => settings.setSettings({ messageTemplate: e.target.value })}
           placeholder="Olá {nome}! …"
         />
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 8,
+            marginTop: 8,
+          }}
+        >
+          <span
+            style={{
+              fontSize: 11.5,
+              color: 'var(--color-text-muted)',
+              lineHeight: 1.4,
+            }}
+          >
+            Linha em branco = parágrafo no WhatsApp.
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const formatted = formatAsBlocks(settings.messageTemplate)
+              if (formatted === normalizeOutboundText(settings.messageTemplate)) {
+                toast.message('A mensagem já está em blocos')
+                return
+              }
+              settings.setSettings({ messageTemplate: formatted })
+              toast.success('Mensagem quebrada em blocos')
+            }}
+          >
+            Formatar em blocos
+          </Button>
+        </div>
         <div
           style={{
             marginTop: 12,

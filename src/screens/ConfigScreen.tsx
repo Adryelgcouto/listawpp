@@ -1040,6 +1040,18 @@ export function ConfigScreen() {
           <li>Em aparelho compartilhado: ative PIN e use “Apagar dados”</li>
         </ul>
       </Card>
+
+      <p
+        style={{
+          margin: '0 0 4px',
+          textAlign: 'center',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          color: 'var(--color-text-faint)',
+        }}
+      >
+        build {__BUILD_ID__} UTC
+      </p>
     </div>
   )
 }

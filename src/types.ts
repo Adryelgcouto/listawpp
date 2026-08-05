@@ -88,8 +88,12 @@ export interface Settings {
   commercialImageDataUrl: string | null
 }
 
-export const DEFAULT_TEMPLATE =
-  'Olá {nome}! Tudo bem? Passando pra te apresentar uma condição especial. Posso te explicar em 2 minutos?'
+/** Blocos separados por linha em branco — é assim que chega bonito no WhatsApp. */
+export const DEFAULT_TEMPLATE = [
+  'Olá {nome}! Tudo bem?',
+  'Passando pra te apresentar uma condição especial.',
+  'Posso te explicar em 2 minutos?',
+].join('\n\n')
 
 /** Default = 90% anti-ban (recomendado) */
 export const DEFAULT_SETTINGS: Settings = {

@@ -95,6 +95,12 @@ function evolutionProxyPlugin(): Plugin {
 }
 
 export default defineConfig({
+  /** Marca do build — a tela Ajustes mostra, pra saber se o PWA pegou a versão nova. */
+  define: {
+    __BUILD_ID__: JSON.stringify(
+      new Date().toISOString().slice(0, 16).replace('T', ' '),
+    ),
+  },
   plugins: [
     react(),
     tailwindcss(),
