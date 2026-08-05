@@ -1,14 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { assertWaAuth } from '../_wa-auth'
 
-function cfg() {
-  const url = (process.env.EVOLUTION_API_URL || '').replace(/\/+$/, '')
-  const key = process.env.EVOLUTION_API_KEY || ''
-  const instance = process.env.EVOLUTION_INSTANCE || 'lista-zap'
-  return { url, key, instance }
-}
-
-/** Remove CPF de texto antes de enviar */
 function stripCpf(text: string): string {
   return text
     .replace(/(?:\d[\d.\-\s/]*){10}\d/g, (m) => {
@@ -23,32 +14,51 @@ export const config = {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' })
-    return
-  }
-  if (!assertWaAuth(req, res)) return
-  const { url, key, instance } = cfg()
-  if (!url || !key) {
-    res.status(503).json({ error: true, message: 'Evolution não configurada' })
-    return
-  }
-
-  const body = req.body as {
-    number?: string
-    text?: string
-    mediaDataUrl?: string
-    caption?: string
-  }
-  const number = String(body.number || '').replace(/\D/g, '')
-  if (number.length < 12) {
-    res.status(400).json({ error: true, message: 'Número inválido' })
-    return
-  }
-
   try {
+    if (req.method !== 'POST') {
+      res.status(405).json({ error: true, message: 'Method not allowed' })
+      return
+    }
+
+    const expected = String(process.env.LISTA_ZAP_WA_SECRET || '').trim()
+    if (expected) {
+      const header = String(req.headers['x-lista-zap-secret'] || '').trim()
+      const auth = String(req.headers.authorization || '').trim()
+      const bearer = auth.toLowerCase().startsWith('bearer ')
+        ? auth.slice(7).trim()
+        : ''
+      if (header !== expected && bearer !== expected) {
+        res.status(401).json({
+          error: true,
+          message: 'Não autorizado (LISTA_ZAP_WA_SECRET).',
+        })
+        return
+      }
+    }
+
+    const url = String(process.env.EVOLUTION_API_URL || '').replace(/\/+$/, '')
+    const key = String(process.env.EVOLUTION_API_KEY || '')
+    const instance = String(process.env.EVOLUTION_INSTANCE || 'lista-zap')
+
+    if (!url || !key) {
+      res.status(503).json({ error: true, message: 'Evolution não configurada' })
+      return
+    }
+
+    const body = (req.body || {}) as {
+      number?: string
+      text?: string
+      mediaDataUrl?: string
+      caption?: string
+    }
+    const number = String(body.number || '').replace(/\D/g, '')
+    if (number.length < 12) {
+      res.status(400).json({ error: true, message: 'Número inválido' })
+      return
+    }
+
     if (body.mediaDataUrl) {
-      const match = body.mediaDataUrl.match(/^data:(.+?);base64,(.+)$/)
+      const match = String(body.mediaDataUrl).match(/^data:(.+?);base64,(.+)$/)
       if (!match) {
         res.status(400).json({ error: true, message: 'Imagem inválida' })
         return
@@ -89,6 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.status(400).json({ error: true, message: 'Texto vazio' })
       return
     }
+
     const r = await fetch(
       `${url}/message/sendText/${encodeURIComponent(instance)}`,
       {

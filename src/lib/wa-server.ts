@@ -1,7 +1,7 @@
 /**
  * Cliente do backend /api/wa/* na Vercel.
  * Chave Evolution fica no servidor — o usuário não cola nada.
- * Se LISTA_ZAP_WA_SECRET / VITE_LISTA_ZAP_WA_SECRET existir, manda no header.
+ * Se VITE_LISTA_ZAP_WA_SECRET existir, manda no header.
  */
 
 export type ServerWaStatus = {
@@ -11,10 +11,13 @@ export type ServerWaStatus = {
   configured?: boolean
   error?: boolean
   message?: string
+  httpStatus?: number
 }
 
 function waHeaders(json = false): HeadersInit {
-  const secret = (import.meta.env.VITE_LISTA_ZAP_WA_SECRET as string | undefined)?.trim()
+  const secret = (
+    import.meta.env.VITE_LISTA_ZAP_WA_SECRET as string | undefined
+  )?.trim()
   const h: Record<string, string> = {}
   if (json) h['Content-Type'] = 'application/json'
   if (secret) {
@@ -24,9 +27,53 @@ function waHeaders(json = false): HeadersInit {
   return h
 }
 
+/** Parse seguro: Vercel às vezes devolve texto "A server error has occurred". */
+async function readJson<T extends Record<string, unknown>>(
+  r: Response,
+): Promise<T> {
+  const text = await r.text()
+  const trimmed = text.trim()
+  if (!trimmed) {
+    throw new Error(`API vazia (HTTP ${r.status})`)
+  }
+  try {
+    return JSON.parse(trimmed) as T
+  } catch {
+    // mensagem humana em vez de "Unexpected token 'A'..."
+    const hint = trimmed
+      .replace(/\s+/g, ' ')
+      .slice(0, 140)
+    if (/FUNCTION_INVOCATION_FAILED|server error/i.test(hint)) {
+      throw new Error(
+        'API WhatsApp caiu no servidor (Vercel). Tente de novo em 30s ou use modo demo.',
+      )
+    }
+    throw new Error(
+      r.ok
+        ? `Resposta inválida da API: ${hint}`
+        : `API HTTP ${r.status}: ${hint}`,
+    )
+  }
+}
+
 export async function serverWaStatus(): Promise<ServerWaStatus> {
-  const r = await fetch('/api/wa/status', { headers: waHeaders() })
-  return (await r.json()) as ServerWaStatus
+  try {
+    const r = await fetch('/api/wa/status', { headers: waHeaders() })
+    const data = await readJson<ServerWaStatus & Record<string, unknown>>(r)
+    if (!r.ok && !data.message) {
+      return {
+        error: true,
+        message: `Status HTTP ${r.status}`,
+        ...data,
+      }
+    }
+    return data
+  } catch (e) {
+    return {
+      error: true,
+      message: e instanceof Error ? e.message : String(e),
+    }
+  }
 }
 
 export async function serverWaQr(): Promise<{
@@ -37,14 +84,30 @@ export async function serverWaQr(): Promise<{
   instance?: string
   status?: string
 }> {
-  const r = await fetch('/api/wa/qr', { headers: waHeaders() })
-  return (await r.json()) as {
-    ok: boolean
-    qr?: string | null
-    pairingCode?: string | null
-    message?: string
-    instance?: string
-    status?: string
+  try {
+    const r = await fetch('/api/wa/qr', { headers: waHeaders() })
+    const data = await readJson<{
+      ok?: boolean
+      qr?: string | null
+      pairingCode?: string | null
+      message?: string
+      instance?: string
+      status?: string
+      error?: boolean
+    }>(r)
+    return {
+      ok: Boolean(data.ok),
+      qr: data.qr,
+      pairingCode: data.pairingCode,
+      message: data.message,
+      instance: data.instance,
+      status: data.status,
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : String(e),
+    }
   }
 }
 
@@ -63,9 +126,11 @@ export async function serverWaSend(params: {
       caption: params.text,
     }),
   })
-  if (!r.ok) {
-    const j = (await r.json().catch(() => ({}))) as { message?: string }
-    throw new Error(j.message || `Envio falhou (${r.status})`)
+  const data = await readJson<{ message?: string; ok?: boolean; error?: boolean }>(
+    r,
+  )
+  if (!r.ok || data.error) {
+    throw new Error(data.message || `Envio falhou (${r.status})`)
   }
 }
 

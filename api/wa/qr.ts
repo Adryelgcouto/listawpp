@@ -1,12 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { assertWaAuth } from '../_wa-auth'
-
-function cfg() {
-  const url = (process.env.EVOLUTION_API_URL || '').replace(/\/+$/, '')
-  const key = process.env.EVOLUTION_API_KEY || ''
-  const instance = process.env.EVOLUTION_INSTANCE || 'lista-zap'
-  return { url, key, instance }
-}
 
 function pickQr(data: Record<string, unknown>): string | null {
   const raw =
@@ -19,23 +11,46 @@ function pickQr(data: Record<string, unknown>): string | null {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'GET') {
-    res.status(405).json({ error: 'Method not allowed' })
-    return
-  }
-  if (!assertWaAuth(req, res)) return
-  const { url, key, instance } = cfg()
-  if (!url || !key) {
-    res.status(503).json({ error: true, message: 'Evolution não configurada no servidor' })
-    return
-  }
-
   try {
-    // 1) Status primeiro — NUNCA chamar /connect se já está open (derruba Baileys)
+    if (req.method !== 'GET') {
+      res.status(405).json({ error: true, message: 'Method not allowed' })
+      return
+    }
+
+    const expected = String(process.env.LISTA_ZAP_WA_SECRET || '').trim()
+    if (expected) {
+      const header = String(req.headers['x-lista-zap-secret'] || '').trim()
+      const auth = String(req.headers.authorization || '').trim()
+      const bearer = auth.toLowerCase().startsWith('bearer ')
+        ? auth.slice(7).trim()
+        : ''
+      if (header !== expected && bearer !== expected) {
+        res.status(401).json({
+          error: true,
+          message: 'Não autorizado (LISTA_ZAP_WA_SECRET).',
+        })
+        return
+      }
+    }
+
+    const url = String(process.env.EVOLUTION_API_URL || '').replace(/\/+$/, '')
+    const key = String(process.env.EVOLUTION_API_KEY || '')
+    const instance = String(process.env.EVOLUTION_INSTANCE || 'lista-zap')
+
+    if (!url || !key) {
+      res.status(503).json({
+        error: true,
+        message: 'Evolution não configurada no servidor',
+      })
+      return
+    }
+
+    // Status primeiro — nunca /connect se open
     const st = await fetch(
       `${url}/instance/connectionState/${encodeURIComponent(instance)}`,
       { headers: { apikey: key, Authorization: `Bearer ${key}` } },
     )
+
     if (st.ok) {
       const stText = await st.text()
       try {
@@ -56,26 +71,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return
         }
       } catch {
-        /* segue pro connect */
+        /* segue */
       }
     }
 
     if (st.status === 404) {
-      await fetch(`${url}/instance/create`, {
-        method: 'POST',
-        headers: {
-          apikey: key,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          instanceName: instance,
-          integration: 'WHATSAPP-BAILEYS',
-          qrcode: true,
-        }),
-      })
+      try {
+        await fetch(`${url}/instance/create`, {
+          method: 'POST',
+          headers: {
+            apikey: key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            instanceName: instance,
+            integration: 'WHATSAPP-BAILEYS',
+            qrcode: true,
+          }),
+        })
+      } catch {
+        /* ignore create failure; connect still attempted */
+      }
     }
 
-    // 2) Só agora pede QR (connect). Cliente deve chamar isso com throttle.
     const r = await fetch(
       `${url}/instance/connect/${encodeURIComponent(instance)}`,
       { headers: { apikey: key, Authorization: `Bearer ${key}` } },
@@ -85,9 +103,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       data = JSON.parse(text) as Record<string, unknown>
     } catch {
-      res.status(502).json({ error: true, message: 'Resposta inválida da Evolution' })
+      res.status(502).json({
+        error: true,
+        message: 'Resposta inválida da Evolution ao pedir QR',
+      })
       return
     }
+
     const qr = pickQr(data)
     const pairing =
       typeof data.pairingCode === 'string' ? data.pairingCode : null
