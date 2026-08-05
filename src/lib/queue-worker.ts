@@ -9,6 +9,7 @@ import {
   sanitizeLogLine,
   sanitizePersonName,
 } from './security'
+import { hasServerWaApi, serverWaSend } from './wa-server'
 import { registerWipeStopWorker } from './wipe'
 import { useClientsStore } from '@/stores/clients'
 import { useQueueStore } from '@/stores/queue'
@@ -155,6 +156,17 @@ export async function startQueueWorker() {
 
         if (settings.demoMode) {
           await sleep(400 + Math.random() * 600, { aborted: loopAbort })
+        } else if (hasServerWaApi()) {
+          // Produção Vercel: chave fica no servidor (/api/wa/send)
+          const image =
+            settings.sendImage && settings.commercialImageDataUrl
+              ? settings.commercialImageDataUrl
+              : null
+          await serverWaSend({
+            number: item.phone,
+            text: message,
+            mediaDataUrl: image,
+          })
         } else {
           const image =
             settings.sendImage && settings.commercialImageDataUrl

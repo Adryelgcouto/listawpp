@@ -30,6 +30,11 @@ import {
   getConnectionState,
 } from '@/lib/evolution'
 import { isSafeEvolutionUrl } from '@/lib/security'
+import {
+  hasServerWaApi,
+  serverWaQr,
+  serverWaStatus,
+} from '@/lib/wa-server'
 import { useSettingsStore } from '@/stores/settings'
 import type { WaConnectionStatus } from '@/types'
 
@@ -113,30 +118,15 @@ export function ConfigScreen() {
     if (!settings.demoMode) void refreshStatus()
   }, [refreshStatus, settings.demoMode])
 
-  /** Fluxo principal: desliga demo se preciso e pede QR/código */
+  /** Fluxo principal: um botão. Na Vercel usa /api/wa (chave no servidor). */
   const connectWhatsApp = async () => {
     stopPolling()
     setWaError(null)
     setQrDataUrl(null)
     setPairingCode(null)
 
-    // Auto: usuário quer WhatsApp real → sai do demo
     if (settings.demoMode) {
       settings.setSettings({ demoMode: false })
-      toast.message('Modo demo desligado pra conectar o WhatsApp de verdade')
-    }
-
-    const miss = missingSetupMessage({
-      evolutionUrl: settings.evolutionUrl,
-      evolutionApiKey: settings.evolutionApiKey,
-      evolutionInstance: settings.evolutionInstance,
-    })
-    if (miss) {
-      setShowAdvanced(true)
-      setWaError(miss)
-      setWaStatus('error')
-      toast.error(miss)
-      return
     }
 
     setPolling(true)
@@ -144,21 +134,34 @@ export function ConfigScreen() {
     pollCountRef.current = 0
     setPollCount(0)
     setWaStatus('connecting')
-    toast.message('Garantindo instância na Evolution do VSB…')
 
-    // 1) cria instância lista-zap se ainda não existir (mesma Evolution da nuvem)
-    const ensured = await ensureInstance({
-      url: settings.evolutionUrl,
-      apiKey: settings.evolutionApiKey,
-      instance: settings.evolutionInstance,
-    })
-    if (!ensured.ok) {
-      stopPolling()
-      setShowAdvanced(true)
-      setWaStatus('error')
-      setWaError(ensured.error ?? 'Não deu pra criar/usar a instância')
-      toast.error(ensured.error ?? 'Falha na instância')
-      return
+    const useServer = hasServerWaApi()
+
+    if (!useServer) {
+      const miss = missingSetupMessage({
+        evolutionUrl: settings.evolutionUrl,
+        evolutionApiKey: settings.evolutionApiKey,
+        evolutionInstance: settings.evolutionInstance,
+      })
+      if (miss) {
+        stopPolling()
+        setShowAdvanced(true)
+        setWaError(miss)
+        setWaStatus('error')
+        toast.error(miss)
+        return
+      }
+      const ensured = await ensureInstance({
+        url: settings.evolutionUrl,
+        apiKey: settings.evolutionApiKey,
+        instance: settings.evolutionInstance,
+      })
+      if (!ensured.ok) {
+        stopPolling()
+        setWaStatus('error')
+        setWaError(ensured.error ?? 'Falha na instância')
+        return
+      }
     }
 
     const tick = async () => {
@@ -166,7 +169,7 @@ export function ConfigScreen() {
       if (pollCountRef.current >= MAX_QR_POLLS) {
         stopPolling()
         setWaError(
-          'Ainda não conectou. Toque de novo em “Conectar WhatsApp” para gerar outro QR.',
+          'Ainda não conectou. Toque de novo em “Conectar WhatsApp”.',
         )
         setWaStatus('error')
         return
@@ -176,44 +179,55 @@ export function ConfigScreen() {
       setPollCount(pollCountRef.current)
 
       try {
-        const state = await getConnectionState(
-          settings.evolutionUrl,
-          settings.evolutionApiKey,
-          settings.evolutionInstance,
-        )
-        if (state.status === 'open') {
-          setWaStatus('open')
-          setQrDataUrl(null)
-          setPairingCode(null)
-          setWaError(null)
-          stopPolling()
-          toast.success('WhatsApp conectado!')
-          return
-        }
-
-        const qr = await fetchQrCode(
-          settings.evolutionUrl,
-          settings.evolutionApiKey,
-          settings.evolutionInstance,
-        )
-        if (qr.qr) {
-          setQrDataUrl(qr.qr)
-          setWaStatus('connecting')
-          setWaError(null)
-        }
-        if (qr.pairingCode) {
-          setPairingCode(qr.pairingCode)
-          setWaStatus('connecting')
-        }
-        if (!qr.qr && !qr.pairingCode && qr.error) {
-          setWaError(qr.error)
-          // não para o poll no primeiro erro transitório; só se config/cors
-          if (/chave|API key|401|403|localhost|Vercel|URL|instância/i.test(qr.error)) {
-            setWaStatus('error')
+        if (useServer) {
+          const st = await serverWaStatus()
+          const s = String(st.status || '').toLowerCase()
+          if (s === 'open' || s === 'connected') {
+            setWaStatus('open')
+            setQrDataUrl(null)
+            setPairingCode(null)
+            setWaError(null)
             stopPolling()
-            setShowAdvanced(true)
+            toast.success('WhatsApp conectado!')
             return
           }
+          const qr = await serverWaQr()
+          if (qr.qr) {
+            setQrDataUrl(qr.qr)
+            setWaStatus('connecting')
+            setWaError(null)
+          }
+          if (qr.pairingCode) setPairingCode(qr.pairingCode)
+          if (!qr.ok && qr.message && !qr.qr) {
+            setWaError(qr.message)
+          }
+        } else {
+          const state = await getConnectionState(
+            settings.evolutionUrl,
+            settings.evolutionApiKey,
+            settings.evolutionInstance,
+          )
+          if (state.status === 'open') {
+            setWaStatus('open')
+            setQrDataUrl(null)
+            setPairingCode(null)
+            setWaError(null)
+            stopPolling()
+            toast.success('WhatsApp conectado!')
+            return
+          }
+          const qr = await fetchQrCode(
+            settings.evolutionUrl,
+            settings.evolutionApiKey,
+            settings.evolutionInstance,
+          )
+          if (qr.qr) {
+            setQrDataUrl(qr.qr)
+            setWaStatus('connecting')
+            setWaError(null)
+          }
+          if (qr.pairingCode) setPairingCode(qr.pairingCode)
+          if (!qr.qr && !qr.pairingCode && qr.error) setWaError(qr.error)
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -222,11 +236,6 @@ export function ConfigScreen() {
       }
 
       if (abortRef.current) return
-      if (pollCountRef.current >= MAX_QR_POLLS) {
-        stopPolling()
-        setWaError('Tempo esgotado. Toque em Conectar WhatsApp de novo.')
-        return
-      }
       pollTimer.current = window.setTimeout(() => void tick(), POLL_MS)
     }
 
@@ -296,9 +305,8 @@ export function ConfigScreen() {
             lineHeight: 1.5,
           }}
         >
-          Usa a <strong>mesma Evolution do VSB</strong> (já na nuvem). O app só
-          cria a instância <strong>lista-zap</strong> e mostra o QR pra você
-          parear o número.
+          Já está ligado na Evolution do VSB. Toque no botão, escaneie o QR no
+          WhatsApp. Pronto.
         </p>
         <ol
           style={{
@@ -310,14 +318,12 @@ export function ConfigScreen() {
           }}
         >
           <li>
-            Em <strong>Configurar servidor</strong>: cole a chave master da
-            Evolution do VSB (uma vez)
+            Toque <strong>Conectar WhatsApp</strong>
           </li>
           <li>
-            Toque <strong>Conectar WhatsApp</strong> (cria a instância se
-            precisar)
+            No celular: WhatsApp → Aparelhos conectados → Conectar aparelho
           </li>
-          <li>Escaneie o QR no celular → pronto</li>
+          <li>Escaneie o QR → status fica conectado</li>
         </ol>
 
         {waStatus === 'open' && !settings.demoMode ? (

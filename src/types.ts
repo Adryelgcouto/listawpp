@@ -86,8 +86,8 @@ export const DEFAULT_TEMPLATE =
 /** Default = 90% anti-ban (recomendado) */
 export const DEFAULT_SETTINGS: Settings = {
   demoMode: true,
-  /** Evolution já na nuvem do VSB — só cria mais uma instância (lista-zap) */
-  evolutionUrl: 'https://wpp.viversemprebemvsb.com',
+  /** Evolution pública do VSB (path /evolution no nginx) */
+  evolutionUrl: 'https://adryel.giize.com/evolution',
   evolutionApiKey: '',
   evolutionInstance: 'lista-zap',
   geminiApiKey: '',
