@@ -97,10 +97,13 @@ function mapColumns(
       if (!cell) continue
       const d = digitsOnly(cell)
       const phone = normalizePhone(cell)
-      if (isValidBrPhone(phone) || (d.length >= 10 && d.length <= 13)) {
+      // CPF (11) antes de telefone genérico — evita classificar CPF como tel
+      if (d.length === 11 && !isValidBrPhone(phone)) {
+        scores[i]!.cpf += 3
+      } else if (isValidBrPhone(phone)) {
+        scores[i]!.phone += 3
+      } else if (d.length === 10 || d.length === 12 || d.length === 13) {
         scores[i]!.phone += 2
-      } else if (d.length === 11) {
-        scores[i]!.cpf += 2
       } else if (/[A-Za-zÀ-ú]{2,}/.test(cell) && d.length < 6) {
         scores[i]!.name += 1
       }
@@ -171,7 +174,8 @@ function rowsFromMatrix(
 
   const first = (matrix[0] ?? []).map(cellStr)
   const headerScore = first.filter((h) => classifyHeader(h) !== 'ignore').length
-  const useHeader = hasHeader || headerScore >= 2
+  // Só trata 1ª linha como cabeçalho se parecer de fato (nomes de colunas)
+  const useHeader = headerScore >= 2 || (hasHeader && headerScore >= 1)
 
   const headers = useHeader
     ? first.map((h, i) => h || `Coluna ${i + 1}`)
@@ -261,7 +265,7 @@ export async function parseSpreadsheetFile(
     if (isCsv) {
       const text = await file.text()
       const matrix = parseCsvText(text)
-      const parsed = rowsFromMatrix(matrix, true)
+      const parsed = rowsFromMatrix(matrix, false)
       if (parsed.rows.length === 0) {
         return {
           ...parsed,
@@ -299,7 +303,7 @@ export async function parseSpreadsheetFile(
       raw: false,
     }) as unknown[][]
 
-    const parsed = rowsFromMatrix(matrix, true)
+    const parsed = rowsFromMatrix(matrix, false)
     if (parsed.rows.length === 0) {
       return {
         ...parsed,
