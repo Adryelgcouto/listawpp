@@ -16,6 +16,28 @@ npm test
 npm run build
 ```
 
+## Vercel
+
+Repo: https://github.com/Adryelgcouto/listawpp  
+
+1. Importar em https://vercel.com/new?repository-url=https://github.com/Adryelgcouto/listawpp  
+2. Framework: **Vite** (detectado) · Build: `npm run build` · Output: `dist`  
+3. Deploy. URL pública fica no dashboard.  
+4. Em **Ajustes** do app na Vercel:
+   - **Desligue modo demo**
+   - URL da Evolution deve ser **HTTPS pública** (localhost não funciona no serverless)
+   - API key + nome da instância
+   - **Testar conexão** → Gerar QR se `close`
+
+Proxy CORS: browser → `/evo/*` → function `api/evo/[...path]` → sua Evolution (`X-Evolution-Target`).
+
+CLI (opcional, após `npx vercel login`):
+
+```bash
+npx vercel link --yes
+npx vercel --prod
+```
+
 ## Segurança (resumo)
 
 - **CPF** nunca no payload WhatsApp (strip + fail-closed + sanitização de nome na ingestão)
