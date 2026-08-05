@@ -472,6 +472,20 @@ export async function extractFromImages(params: {
   }
 }
 
+/** Origem do texto que vai pro WhatsApp — feedback honesto na UI. */
+export type MessageSource = 'template' | 'rewrite' | 'fallback' | 'demo'
+
+export type PreparedMessage = {
+  text: string
+  source: MessageSource
+  /** Por que não usou rewrite (só em fallback/template) */
+  reason?: string
+}
+
+/**
+ * Prepara o texto de envio.
+ * Default de produto: template completo. Rewrite é opt-in e só entra se passar no gate.
+ */
 export async function rewriteMessage(params: {
   apiKey: string
   model: string
@@ -480,17 +494,30 @@ export async function rewriteMessage(params: {
   seed: number
   useGemini: boolean
   forceDemo?: boolean
-}): Promise<string> {
+}): Promise<PreparedMessage> {
   const safeName = sanitizePersonName(params.nome)
   // H-02: sanitiza ANTES de ir ao Google
   const base = stripCpfEverywhere(applyTemplate(params.template, safeName))
 
-  // Demo: variação local ok. Live SEM rewrite: manda o template EXATO (com o nome certo).
-  if (params.forceDemo) {
-    return localRewrite(base, params.seed)
+  // Demo sem rewrite Gemini: variação local (não é envio real)
+  if (params.forceDemo && !params.useGemini) {
+    return {
+      text: localRewrite(base, params.seed),
+      source: 'demo',
+      reason: 'modo demo',
+    }
   }
-  if (!params.useGemini || !params.apiKey.trim()) {
-    return base
+
+  if (!params.useGemini) {
+    return { text: base, source: 'template', reason: 'rewrite desligado' }
+  }
+
+  if (!params.apiKey.trim()) {
+    return {
+      text: base,
+      source: 'fallback',
+      reason: 'sem API key Gemini — template',
+    }
   }
 
   // se ainda sobrou padrão de CPF, não manda pra rede — envia base
@@ -498,7 +525,11 @@ export async function rewriteMessage(params: {
     /\d{3}.*\d{3}.*\d{3}.*\d{2}/.test(base) &&
     base.replace(/\D/g, '').length >= 11
   ) {
-    return base
+    return {
+      text: base,
+      source: 'fallback',
+      reason: 'possível CPF no texto — template',
+    }
   }
 
   registerRuntimeSecret(params.apiKey)
@@ -506,7 +537,7 @@ export async function rewriteMessage(params: {
   try {
     // Preferir modelo sem “thinking” pesado no rewrite (2.5 come tokens e corta o texto)
     const rewriteModel =
-      /2\.5|thinking|pro/i.test(params.model) &&
+      /2\.5|3\.|thinking|pro/i.test(params.model) &&
       !/flash-lite/i.test(params.model)
         ? 'gemini-2.0-flash'
         : params.model
@@ -518,18 +549,39 @@ export async function rewriteMessage(params: {
       generationConfig: {
         temperature: 0.45,
         maxOutputTokens: 2048,
-        // Gemini 2.5: zera thinking pra não gastar o budget e devolver 4 palavras
         thinkingConfig: { thinkingBudget: 0 },
       },
       timeoutMs: 30_000,
     })
 
-    // Falha ou recorte → template COMPLETO com o nome do contato da fila
-    if (!gen.ok || !gen.text) return base
+    if (!gen.ok || !gen.text) {
+      return {
+        text: base,
+        source: 'fallback',
+        reason: gen.ok
+          ? 'Gemini vazio — template'
+          : `Gemini falhou (${gen.status}) — template`,
+      }
+    }
 
     const cleaned = stripCpfEverywhere(gen.text)
-    return acceptRewriteOrBase(base, cleaned, safeName)
-  } catch {
-    return base
+    const accepted = acceptRewriteOrBase(base, cleaned, safeName)
+    if (accepted === base) {
+      return {
+        text: base,
+        source: 'fallback',
+        reason: 'rewrite curto/inválido — template completo',
+      }
+    }
+    return { text: accepted, source: 'rewrite' }
+  } catch (err) {
+    return {
+      text: base,
+      source: 'fallback',
+      reason:
+        err instanceof Error
+          ? `erro: ${err.message.slice(0, 60)} — template`
+          : 'erro Gemini — template',
+    }
   }
 }

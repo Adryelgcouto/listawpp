@@ -14,12 +14,14 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { formatPhoneDisplay } from '@/lib/phone'
+import { applyTemplate } from '@/lib/message'
 import {
   pauseQueueWorker,
   startQueueWorker,
   stopQueueWorker,
 } from '@/lib/queue-worker'
 import { queueStats, useQueueStore } from '@/stores/queue'
+import { useSettingsStore } from '@/stores/settings'
 import type { QueueItem, QueueItemStatus } from '@/types'
 
 export function FilaScreen() {
@@ -31,6 +33,7 @@ export function FilaScreen() {
   const resetFailedToPending = useQueueStore((s) => s.resetFailedToPending)
   const clearQueue = useQueueStore((s) => s.clearQueue)
   const clearLogs = useQueueStore((s) => s.clearLogs)
+  const settings = useSettingsStore()
   const stats = queueStats(items)
 
   const progress =
@@ -39,6 +42,9 @@ export function FilaScreen() {
       : Math.round(((stats.sent + stats.skipped) / stats.total) * 100)
 
   const firstPending = items.find((i) => i.status === 'pending')
+  const nextText = firstPending
+    ? applyTemplate(settings.messageTemplate, firstPending.name)
+    : null
 
   return (
     <div>
@@ -186,6 +192,60 @@ export function FilaScreen() {
           </Button>
         </div>
       </Card>
+
+      {nextText && firstPending ? (
+        <Card style={{ marginBottom: 12, padding: 14 }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'baseline',
+              gap: 8,
+              marginBottom: 8,
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: 13 }}>
+              Próximo envio · {firstPending.name}
+            </div>
+            <span
+              style={{
+                fontSize: 11,
+                color: 'var(--color-text-faint)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {nextText.length} chars
+              {settings.useGeminiRewrite ? ' · base' : ' · exato'}
+            </span>
+          </div>
+          <div
+            style={{
+              fontSize: 13.5,
+              lineHeight: 1.45,
+              color: 'var(--color-text)',
+              whiteSpace: 'pre-wrap',
+              padding: '10px 12px',
+              borderRadius: 12,
+              background: 'var(--color-bg-elevated)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            {nextText}
+          </div>
+          <p
+            style={{
+              margin: '8px 0 0',
+              fontSize: 11.5,
+              color: 'var(--color-text-muted)',
+              lineHeight: 1.4,
+            }}
+          >
+            {settings.useGeminiRewrite
+              ? 'Rewrite Gemini ligado: pode variar. Se falhar, manda este texto e o log avisa “template (fallback)”.'
+              : 'Rewrite desligado: este é o texto exato que vai no WhatsApp.'}
+          </p>
+        </Card>
+      ) : null}
 
       {items.length === 0 ? (
         <Card padded={false} style={{ marginBottom: 12 }}>

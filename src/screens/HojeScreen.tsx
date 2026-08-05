@@ -330,8 +330,28 @@ export function HojeScreen() {
             border: '1px dashed var(--color-border-strong)',
           }}
         >
-          <div className="eyebrow" style={{ marginBottom: 6 }}>
-            Preview
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 6,
+              gap: 8,
+            }}
+          >
+            <div className="eyebrow" style={{ margin: 0 }}>
+              Texto que vai sair
+              {settings.useGeminiRewrite ? ' (base)' : ' (exato)'}
+            </div>
+            <span
+              style={{
+                fontSize: 11,
+                color: 'var(--color-text-faint)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {preview.length} chars
+            </span>
           </div>
           <div
             style={{
@@ -343,15 +363,37 @@ export function HojeScreen() {
           >
             {preview}
           </div>
+          {settings.useGeminiRewrite ? (
+            <p
+              style={{
+                margin: '8px 0 0',
+                fontSize: 11.5,
+                color: 'var(--color-text-muted)',
+                lineHeight: 1.4,
+              }}
+            >
+              Rewrite ligado: o Gemini pode variar. Se falhar ou cortar, a fila
+              manda este texto completo e avisa no log.
+            </p>
+          ) : null}
         </div>
       </Card>
 
       <Card style={{ marginBottom: 12, padding: '6px 14px 14px' }}>
         <Toggle
-          label="Reescrever com Gemini"
-          description="Opt-in: varia a frase mantendo o nome e o sentido. Se falhar ou cortar, manda o template inteiro."
+          label="Reescrever com Gemini (opcional)"
+          description="Desligado = manda o template inteiro (recomendado). Ligado = tenta variar; se der ruim, usa o template e registra no log."
           checked={settings.useGeminiRewrite}
-          onChange={(v) => settings.setSettings({ useGeminiRewrite: v })}
+          onChange={(v) => {
+            settings.setSettings({ useGeminiRewrite: v })
+            if (v) {
+              toast.message(
+                'Rewrite ligado — se o Gemini falhar, manda o template completo',
+              )
+            } else {
+              toast.success('Rewrite off — mensagem = template exato')
+            }
+          }}
         />
         <hr className="hairline" />
         <Toggle

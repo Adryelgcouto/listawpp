@@ -145,20 +145,30 @@ export async function startQueueWorker() {
       safeLog('info', `Enviando · ${who} (${phoneMask})…`, item.id)
 
       try {
-        const msgRaw = await rewriteMessage({
+        const prepared = await rewriteMessage({
           apiKey: settings.geminiApiKey,
           model: settings.geminiModel,
           template: settings.messageTemplate,
           nome: sanitizePersonName(item.name),
           seed: item.attempts + item.phone.length,
           useGemini: settings.useGeminiRewrite,
-          // demoMode só simula envio — NÃO força rewrite local se o user quer live text
-          forceDemo: false,
+          forceDemo: settings.demoMode && !settings.useGeminiRewrite,
         })
-        const message = assertSafeOutboundText(msgRaw, 'mensagem WhatsApp')
+        const message = assertSafeOutboundText(
+          prepared.text,
+          'mensagem WhatsApp',
+        )
+        const srcLabel =
+          prepared.source === 'rewrite'
+            ? 'rewrite Gemini'
+            : prepared.source === 'fallback'
+              ? 'template (fallback)'
+              : prepared.source === 'demo'
+                ? 'demo'
+                : 'template'
         safeLog(
-          'info',
-          `Texto ${message.length} chars · ${settings.useGeminiRewrite ? 'rewrite' : 'template'} · ${who}`,
+          prepared.source === 'fallback' ? 'warn' : 'info',
+          `Texto ${message.length} chars · ${srcLabel}${prepared.reason ? ` · ${prepared.reason}` : ''} · ${who}`,
           item.id,
         )
 

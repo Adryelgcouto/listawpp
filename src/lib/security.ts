@@ -77,7 +77,8 @@ export function sanitizeLogLine(message: string): string {
   return sanitizeErrorMessage(message, 220)
 }
 
-export function safeMessagePreview(text: string, max = 280): string {
+/** Preview na fila — mostra quase o texto inteiro (máx 500). */
+export function safeMessagePreview(text: string, max = 500): string {
   const clean = stripCpfEverywhere(text)
   if (clean.length <= max) return clean
   return `${clean.slice(0, max)}…`
