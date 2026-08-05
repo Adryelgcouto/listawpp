@@ -86,8 +86,8 @@ export const DEFAULT_TEMPLATE =
 /** Default = 90% anti-ban (recomendado) */
 export const DEFAULT_SETTINGS: Settings = {
   demoMode: true,
-  /** Ajuste pra URL real da sua Evolution (não deixe um serviço aleatório na porta) */
-  evolutionUrl: 'http://127.0.0.1:8081',
+  /** URL pública HTTPS da Evolution (sempre online) — não use localhost no celular/trabalho */
+  evolutionUrl: '',
   evolutionApiKey: '',
   evolutionInstance: 'lista-zap',
   geminiApiKey: '',

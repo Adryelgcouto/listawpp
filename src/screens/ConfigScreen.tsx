@@ -32,23 +32,22 @@ import type { WaConnectionStatus } from '@/types'
 const MAX_QR_POLLS = 20
 const POLL_MS = 3000
 
-function isOnVercel(): boolean {
-  if (typeof window === 'undefined') return false
-  return /\.vercel\.app$|vercel\.app$/i.test(window.location.hostname)
-}
-
 function missingSetupMessage(s: {
   evolutionUrl: string
   evolutionApiKey: string
   evolutionInstance: string
 }): string | null {
-  if (!s.evolutionUrl.trim()) return 'Falta o endereço do servidor Evolution.'
-  if (!s.evolutionApiKey.trim()) {
-    return 'Falta a chave secreta (API key) da Evolution — não é o texto do placeholder, é a chave real do painel/docker.'
+  if (!s.evolutionUrl.trim()) {
+    return 'Falta a URL da Evolution na nuvem (https://…). Sem isso o site sozinho não fala com o WhatsApp.'
   }
-  if (!s.evolutionInstance.trim()) return 'Falta o nome da instância (ex.: lista-zap).'
-  if (isOnVercel() && /localhost|127\.0\.0\.1/i.test(s.evolutionUrl)) {
-    return 'Você está na Vercel: localhost não funciona aqui. Use a URL pública HTTPS da sua Evolution (ou rode o app no Mac com a Evolution local).'
+  if (!s.evolutionApiKey.trim()) {
+    return 'Falta a chave secreta da Evolution (cole a chave real do painel, não o texto de exemplo).'
+  }
+  if (!s.evolutionInstance.trim()) {
+    return 'Falta o nome da instância (ex.: lista-zap).'
+  }
+  if (/localhost|127\.0\.0\.1/i.test(s.evolutionUrl)) {
+    return 'Localhost só funciona no mesmo PC. Pro site no trabalho/celular, use Evolution hospedada com URL https:// pública.'
   }
   const safe = isSafeEvolutionUrl(s.evolutionUrl)
   if (!safe.ok) return safe.reason ?? 'URL inválida'
@@ -269,6 +268,18 @@ export function ConfigScreen() {
           />
         </div>
 
+        <p
+          style={{
+            margin: '0 0 12px',
+            fontSize: 13,
+            color: 'var(--color-text-muted)',
+            lineHeight: 1.5,
+          }}
+        >
+          Você acessa o <strong>site de qualquer lugar</strong> (casa, trabalho,
+          celular). O que precisa ficar 24h online é só o servidor{' '}
+          <strong>Evolution na nuvem</strong> — não o seu PC de casa.
+        </p>
         <ol
           style={{
             margin: '0 0 14px',
@@ -278,12 +289,16 @@ export function ConfigScreen() {
             lineHeight: 1.5,
           }}
         >
-          <li>Preencha a chave da Evolution (abaixo em “Configurar servidor”)</li>
-          <li>Toque em <strong>Conectar WhatsApp</strong></li>
           <li>
-            No celular: WhatsApp → Aparelhos conectados → Conectar aparelho
+            Uma vez: subir Evolution na nuvem (VPS / Railway / EasyPanel etc.)
           </li>
-          <li>Escaneie o QR ou use o código de pareamento</li>
+          <li>
+            Colar URL HTTPS + chave em <strong>Configurar servidor</strong>
+          </li>
+          <li>
+            Toque <strong>Conectar WhatsApp</strong> → escanear QR no celular
+          </li>
+          <li>Pronto: lista-zap.vercel.app de qualquer rede, sem PC ligado</li>
         </ol>
 
         {waStatus === 'open' && !settings.demoMode ? (
@@ -471,25 +486,22 @@ export function ConfigScreen() {
                 lineHeight: 1.45,
               }}
             >
-              O Lista Zap não é o WhatsApp Web. Ele precisa de um servidor{' '}
-              <strong>Evolution API</strong> rodando (no seu PC ou na nuvem). Aí
-              sim aparece o QR pra parear o seu número.
+              <strong>Não precisa de PC em casa ligado.</strong> O site (Vercel)
+              roda na nuvem. A Evolution também tem que rodar na nuvem, 24h — um
+              servidor barato. Aí você abre o site no trabalho, no celular, em
+              qualquer Wi‑Fi, e o WhatsApp continua conectado.
             </p>
             <Field
-              label="Endereço do servidor"
+              label="URL da Evolution (HTTPS, na nuvem)"
               value={settings.evolutionUrl}
               onChange={(v) => settings.setSettings({ evolutionUrl: v })}
-              placeholder={
-                isOnVercel()
-                  ? 'https://sua-evolution.com'
-                  : 'http://127.0.0.1:8081'
-              }
+              placeholder="https://evo.seudominio.com"
             />
             <Field
               label="Chave secreta (API key)"
               value={settings.evolutionApiKey}
               onChange={(v) => settings.setSettings({ evolutionApiKey: v })}
-              placeholder="Cole a chave real aqui"
+              placeholder="Cole a chave real do painel da Evolution"
               type="password"
             />
             <Field
@@ -503,12 +515,12 @@ export function ConfigScreen() {
                 margin: '0 0 12px',
                 fontSize: 11,
                 color: 'var(--color-text-faint)',
-                lineHeight: 1.4,
+                lineHeight: 1.45,
               }}
             >
-              {isOnVercel()
-                ? 'No site da Vercel use só HTTPS público da Evolution. Localhost não funciona na nuvem.'
-                : 'No Mac: se a Evolution roda na sua máquina, use http://127.0.0.1:PORTA. No celular, use o IP do Mac na rede (192.168.x.x).'}
+              Exemplos de host: Railway, Render, EasyPanel, VPS (~R$20–40/mês).
+              URL tem que ser <strong>https://…</strong> pública. Localhost só
+              serve pra dev no mesmo PC — no site da Vercel não funciona.
             </p>
             <Toggle
               label="Modo demo (sem WhatsApp real)"
