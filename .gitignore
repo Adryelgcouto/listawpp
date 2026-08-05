@@ -33,3 +33,5 @@ tmp-shot-*
 /tmp-*.txt
 playwright-report
 test-results
+.vercel
+.env*

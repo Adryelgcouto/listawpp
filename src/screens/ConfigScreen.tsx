@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
+  ChevronDown,
+  ChevronUp,
   KeyRound,
   Link2,
   QrCode,
   RefreshCw,
   Shield,
+  Smartphone,
   Wifi,
   WifiOff,
 } from 'lucide-react'
@@ -21,12 +24,7 @@ import {
   formatDuration,
   type AntiBanPreset,
 } from '@/lib/anti-ban'
-import {
-  fetchQrCode,
-  getConnectionState,
-  resolveEvolutionFetchBase,
-  testEvolutionConnection,
-} from '@/lib/evolution'
+import { fetchQrCode, getConnectionState } from '@/lib/evolution'
 import { isSafeEvolutionUrl } from '@/lib/security'
 import { useSettingsStore } from '@/stores/settings'
 import type { WaConnectionStatus } from '@/types'
@@ -34,18 +32,41 @@ import type { WaConnectionStatus } from '@/types'
 const MAX_QR_POLLS = 20
 const POLL_MS = 3000
 
+function isOnVercel(): boolean {
+  if (typeof window === 'undefined') return false
+  return /\.vercel\.app$|vercel\.app$/i.test(window.location.hostname)
+}
+
+function missingSetupMessage(s: {
+  evolutionUrl: string
+  evolutionApiKey: string
+  evolutionInstance: string
+}): string | null {
+  if (!s.evolutionUrl.trim()) return 'Falta o endereço do servidor Evolution.'
+  if (!s.evolutionApiKey.trim()) {
+    return 'Falta a chave secreta (API key) da Evolution — não é o texto do placeholder, é a chave real do painel/docker.'
+  }
+  if (!s.evolutionInstance.trim()) return 'Falta o nome da instância (ex.: lista-zap).'
+  if (isOnVercel() && /localhost|127\.0\.0\.1/i.test(s.evolutionUrl)) {
+    return 'Você está na Vercel: localhost não funciona aqui. Use a URL pública HTTPS da sua Evolution (ou rode o app no Mac com a Evolution local).'
+  }
+  const safe = isSafeEvolutionUrl(s.evolutionUrl)
+  if (!safe.ok) return safe.reason ?? 'URL inválida'
+  return null
+}
+
 export function ConfigScreen() {
   const settings = useSettingsStore()
   const [waStatus, setWaStatus] = useState<WaConnectionStatus>('unknown')
   const [waError, setWaError] = useState<string | null>(null)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+  const [pairingCode, setPairingCode] = useState<string | null>(null)
   const [polling, setPolling] = useState(false)
   const [pollCount, setPollCount] = useState(0)
-  const [testing, setTesting] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const pollTimer = useRef<number | null>(null)
   const pollCountRef = useRef(0)
   const abortRef = useRef(false)
-  const proxyInfo = resolveEvolutionFetchBase(settings.evolutionUrl)
 
   const stopPolling = useCallback(() => {
     abortRef.current = true
@@ -64,10 +85,11 @@ export function ConfigScreen() {
       setWaError(null)
       return 'open' as WaConnectionStatus
     }
-    if (!settings.evolutionUrl || !settings.evolutionApiKey) {
-      setWaStatus('unknown')
-      setWaError('Configure URL e API key da Evolution')
-      return 'unknown' as WaConnectionStatus
+    const missing = missingSetupMessage(settings)
+    if (missing) {
+      setWaStatus('error')
+      setWaError(missing)
+      return 'error' as WaConnectionStatus
     }
     const res = await getConnectionState(
       settings.evolutionUrl,
@@ -85,24 +107,32 @@ export function ConfigScreen() {
   ])
 
   useEffect(() => {
-    void refreshStatus()
-  }, [refreshStatus])
+    if (!settings.demoMode) void refreshStatus()
+  }, [refreshStatus, settings.demoMode])
 
-  const generateQr = async () => {
+  /** Fluxo principal: desliga demo se preciso e pede QR/código */
+  const connectWhatsApp = async () => {
     stopPolling()
     setWaError(null)
     setQrDataUrl(null)
+    setPairingCode(null)
 
+    // Auto: usuário quer WhatsApp real → sai do demo
     if (settings.demoMode) {
-      setWaStatus('open')
-      toast.message('Modo demo: WhatsApp simulado como conectado')
-      return
+      settings.setSettings({ demoMode: false })
+      toast.message('Modo demo desligado pra conectar o WhatsApp de verdade')
     }
 
-    const status = await refreshStatus()
-    if (status === 'open') {
-      setQrDataUrl(null)
-      toast.success('Já conectado — QR desnecessário')
+    const miss = missingSetupMessage({
+      evolutionUrl: settings.evolutionUrl,
+      evolutionApiKey: settings.evolutionApiKey,
+      evolutionInstance: settings.evolutionInstance,
+    })
+    if (miss) {
+      setShowAdvanced(true)
+      setWaError(miss)
+      setWaStatus('error')
+      toast.error(miss)
       return
     }
 
@@ -117,7 +147,7 @@ export function ConfigScreen() {
       if (pollCountRef.current >= MAX_QR_POLLS) {
         stopPolling()
         setWaError(
-          `Limite de ${MAX_QR_POLLS} tentativas atingido. Toque em Gerar QR de novo.`,
+          'Ainda não conectou. Toque de novo em “Conectar WhatsApp” para gerar outro QR.',
         )
         setWaStatus('error')
         return
@@ -135,12 +165,12 @@ export function ConfigScreen() {
         if (state.status === 'open') {
           setWaStatus('open')
           setQrDataUrl(null)
+          setPairingCode(null)
           setWaError(null)
           stopPolling()
           toast.success('WhatsApp conectado!')
           return
         }
-        if (state.error) setWaError(state.error)
 
         const qr = await fetchQrCode(
           settings.evolutionUrl,
@@ -151,9 +181,20 @@ export function ConfigScreen() {
           setQrDataUrl(qr.qr)
           setWaStatus('connecting')
           setWaError(null)
-        } else if (qr.error) {
+        }
+        if (qr.pairingCode) {
+          setPairingCode(qr.pairingCode)
+          setWaStatus('connecting')
+        }
+        if (!qr.qr && !qr.pairingCode && qr.error) {
           setWaError(qr.error)
-          setWaStatus('error')
+          // não para o poll no primeiro erro transitório; só se config/cors
+          if (/chave|API key|401|403|localhost|Vercel|URL|instância/i.test(qr.error)) {
+            setWaStatus('error')
+            stopPolling()
+            setShowAdvanced(true)
+            return
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -164,7 +205,7 @@ export function ConfigScreen() {
       if (abortRef.current) return
       if (pollCountRef.current >= MAX_QR_POLLS) {
         stopPolling()
-        setWaError(`Limite de ${MAX_QR_POLLS} tentativas atingido.`)
+        setWaError('Tempo esgotado. Toque em Conectar WhatsApp de novo.')
         return
       }
       pollTimer.current = window.setTimeout(() => void tick(), POLL_MS)
@@ -181,148 +222,69 @@ export function ConfigScreen() {
         subtitle="Evolution, Gemini e anti-ban"
       />
 
-      <Card style={{ marginBottom: 12 }}>
-        <Toggle
-          label="Modo demo"
-          description={
-            settings.demoMode
-              ? 'LIGADO: envios e QR são simulados — Evolution NÃO é chamada'
-              : 'Desligado: envios reais pela Evolution API'
-          }
-          checked={settings.demoMode}
-          onChange={(v) => {
-            settings.setSettings({ demoMode: v })
-            if (v) {
-              stopPolling()
-              setQrDataUrl(null)
-              setWaStatus('open')
-              setWaError(null)
-              toast.message('Demo ON — Evolution ignorada')
-            } else {
-              toast.success('Demo OFF — Evolution ativa')
-              void refreshStatus()
-            }
-          }}
-        />
-        {settings.demoMode ? (
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 12,
-              lineHeight: 1.45,
-              color: 'var(--color-warn)',
-              background: 'var(--color-warn-soft)',
-              border: '1px solid color-mix(in oklab, var(--color-warn) 30%, transparent)',
-              borderRadius: 10,
-              padding: '10px 12px',
-            }}
-          >
-            <strong>Por que “Evolution não funciona”?</strong> Com demo ligado o
-            app nunca chama a API. Desligue o modo demo acima pra testar de
-            verdade.
-          </div>
-        ) : null}
-      </Card>
-
-      <Section title="WhatsApp (Evolution)">
-        <Field
-          label="URL base"
-          value={settings.evolutionUrl}
-          onChange={(v) => {
-            settings.setSettings({ evolutionUrl: v })
-            const check = isSafeEvolutionUrl(v)
-            if (v.trim() && !check.ok) {
-              toast.message(check.reason ?? 'URL insegura')
-            }
-          }}
-          placeholder="http://127.0.0.1:8081 ou https://evo.seudominio.com"
-        />
-        {settings.evolutionUrl.trim() &&
-        !isSafeEvolutionUrl(settings.evolutionUrl).ok ? (
-          <div
-            style={{
-              fontSize: 12,
-              color: 'var(--color-danger)',
-              marginBottom: 10,
-            }}
-          >
-            {isSafeEvolutionUrl(settings.evolutionUrl).reason}
-          </div>
-        ) : null}
-        <p
-          style={{
-            margin: '0 0 10px',
-            fontSize: 11,
-            color: 'var(--color-text-faint)',
-            lineHeight: 1.4,
-          }}
-        >
-          {proxyInfo.viaProxy
-            ? 'Localhost → proxy /evo (sem CORS no dev).'
-            : 'URL remota → precisa CORS na Evolution (CORS_ORIGIN). No celular use o IP da máquina (ex.: http://192.168.0.198:8081), não localhost.'}
-        </p>
-        <Field
-          label="API key"
-          value={settings.evolutionApiKey}
-          onChange={(v) => settings.setSettings({ evolutionApiKey: v })}
-          placeholder="AUTHENTICATION_API_KEY da Evolution"
-          type="password"
-        />
-        <Field
-          label="Instância (nome)"
-          value={settings.evolutionInstance}
-          onChange={(v) => settings.setSettings({ evolutionInstance: v })}
-          placeholder="lista-zap"
-        />
-        <p
-          style={{
-            margin: '0 0 10px',
-            fontSize: 11,
-            color: 'var(--color-text-faint)',
-          }}
-        >
-          Use o <strong>nome</strong> da instância (ex.: lista-zap), não o UUID.
-        </p>
-
+      {/* —— Conectar WhatsApp (foco do usuário) —— */}
+      <Card style={{ marginBottom: 12, padding: 16 }}>
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-            marginTop: 4,
+            gap: 10,
             marginBottom: 10,
           }}
         >
-          <StatusBadge status={settings.demoMode ? 'open' : waStatus} />
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={<RefreshCw size={14} />}
-            disabled={settings.demoMode}
-            onClick={() => void refreshStatus()}
-          >
-            Atualizar
-          </Button>
-        </div>
-
-        {waError && !settings.demoMode ? (
           <div
             style={{
-              fontSize: 12,
-              color: 'var(--color-danger)',
-              background: 'var(--color-danger-soft)',
-              border:
-                '1px solid color-mix(in oklab, var(--color-danger) 30%, transparent)',
-              borderRadius: 10,
-              padding: '10px 12px',
-              marginBottom: 10,
-              wordBreak: 'break-word',
+              width: 40,
+              height: 40,
+              borderRadius: 12,
+              display: 'grid',
+              placeItems: 'center',
+              background: 'var(--color-accent-soft)',
+              color: 'var(--color-accent)',
             }}
           >
-            {waError}
+            <Smartphone size={20} />
           </div>
-        ) : null}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontWeight: 700,
+                fontSize: 17,
+                letterSpacing: '-0.02em',
+              }}
+            >
+              Conectar WhatsApp
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>
+              Escaneie o QR (ou digite o código) no celular
+            </div>
+          </div>
+          <StatusBadge
+            status={
+              settings.demoMode && !polling && !qrDataUrl
+                ? 'unknown'
+                : waStatus
+            }
+          />
+        </div>
+
+        <ol
+          style={{
+            margin: '0 0 14px',
+            paddingLeft: 18,
+            fontSize: 13,
+            color: 'var(--color-text-muted)',
+            lineHeight: 1.5,
+          }}
+        >
+          <li>Preencha a chave da Evolution (abaixo em “Configurar servidor”)</li>
+          <li>Toque em <strong>Conectar WhatsApp</strong></li>
+          <li>
+            No celular: WhatsApp → Aparelhos conectados → Conectar aparelho
+          </li>
+          <li>Escaneie o QR ou use o código de pareamento</li>
+        </ol>
 
         {waStatus === 'open' && !settings.demoMode ? (
           <div
@@ -335,83 +297,120 @@ export function ConfigScreen() {
               background: 'var(--color-accent-soft)',
               border:
                 '1px solid color-mix(in oklab, var(--color-accent) 30%, transparent)',
-              fontSize: 13,
+              fontSize: 14,
               color: 'var(--color-accent)',
               fontWeight: 600,
-              marginBottom: 10,
+              marginBottom: 12,
             }}
           >
-            <Wifi size={16} />
-            Conectado — QR não necessário
+            <Wifi size={18} />
+            WhatsApp conectado — pode enviar pela Fila
           </div>
         ) : null}
 
-        {qrDataUrl && waStatus !== 'open' && !settings.demoMode ? (
+        {qrDataUrl && waStatus !== 'open' ? (
           <div
             style={{
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              gap: 8,
-              marginBottom: 12,
+              gap: 10,
+              marginBottom: 14,
             }}
           >
             <img
               src={qrDataUrl}
               alt="QR Code WhatsApp"
               style={{
-                width: 220,
-                height: 220,
-                borderRadius: 12,
+                width: 240,
+                height: 240,
+                borderRadius: 16,
                 background: '#fff',
-                padding: 8,
+                padding: 10,
                 border: '1px solid var(--color-border)',
               }}
             />
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              Escaneie no WhatsApp · tentativa {pollCount}/{MAX_QR_POLLS}
+            <div
+              style={{
+                fontSize: 13,
+                color: 'var(--color-text-muted)',
+                textAlign: 'center',
+              }}
+            >
+              Escaneie com o WhatsApp
+              {polling ? ` · aguardando… (${pollCount}/${MAX_QR_POLLS})` : ''}
             </div>
+          </div>
+        ) : null}
+
+        {pairingCode && waStatus !== 'open' ? (
+          <div
+            style={{
+              textAlign: 'center',
+              marginBottom: 14,
+              padding: 14,
+              borderRadius: 14,
+              background: 'var(--color-surface-2)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            <div className="eyebrow" style={{ marginBottom: 6 }}>
+              Código de pareamento
+            </div>
+            <div
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 28,
+                fontWeight: 700,
+                letterSpacing: '0.2em',
+                color: 'var(--color-accent)',
+              }}
+            >
+              {pairingCode}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--color-text-muted)',
+                marginTop: 6,
+              }}
+            >
+              WhatsApp → Aparelhos conectados → Conectar com número de telefone
+            </div>
+          </div>
+        ) : null}
+
+        {waError ? (
+          <div
+            style={{
+              fontSize: 13,
+              color: 'var(--color-danger)',
+              background: 'var(--color-danger-soft)',
+              border:
+                '1px solid color-mix(in oklab, var(--color-danger) 30%, transparent)',
+              borderRadius: 12,
+              padding: '12px 14px',
+              marginBottom: 12,
+              wordBreak: 'break-word',
+              lineHeight: 1.45,
+            }}
+          >
+            {waError}
           </div>
         ) : null}
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Button
-            variant="secondary"
-            disabled={testing || settings.demoMode}
-            onClick={() => {
-              void (async () => {
-                setTesting(true)
-                setWaError(null)
-                const r = await testEvolutionConnection({
-                  url: settings.evolutionUrl,
-                  apiKey: settings.evolutionApiKey,
-                  instance: settings.evolutionInstance,
-                })
-                setTesting(false)
-                if (r.status) setWaStatus(r.status)
-                if (r.ok) {
-                  toast.success(r.message)
-                  setWaError(null)
-                } else {
-                  toast.error(r.message)
-                  setWaError(r.message)
-                  setWaStatus('error')
-                }
-              })()
-            }}
-            style={{ flex: 1 }}
+            icon={<QrCode size={18} />}
+            onClick={() => void connectWhatsApp()}
+            disabled={polling && waStatus !== 'error'}
+            full
           >
-            {testing ? 'Testando…' : 'Testar conexão'}
-          </Button>
-          <Button
-            icon={<QrCode size={16} />}
-            onClick={() => void generateQr()}
-            disabled={
-              settings.demoMode || (polling && waStatus !== 'error')
-            }
-            style={{ flex: 1 }}
-          >
-            {polling ? 'Aguardando…' : 'Gerar QR'}
+            {polling
+              ? 'Aguardando você escanear…'
+              : waStatus === 'open' && !settings.demoMode
+                ? 'Já conectado'
+                : 'Conectar WhatsApp'}
           </Button>
         </div>
         {polling ? (
@@ -421,10 +420,114 @@ export function ConfigScreen() {
             full
             style={{ marginTop: 8 }}
           >
-            Parar poll
+            Cancelar
           </Button>
         ) : null}
-      </Section>
+        {waStatus === 'open' && !settings.demoMode ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<RefreshCw size={14} />}
+            onClick={() => void refreshStatus()}
+            full
+            style={{ marginTop: 8 }}
+          >
+            Verificar de novo
+          </Button>
+        ) : null}
+      </Card>
+
+      {/* Config servidor — recolhido */}
+      <Card style={{ marginBottom: 12, padding: 0 }}>
+        <button
+          type="button"
+          className="tap"
+          onClick={() => setShowAdvanced((v) => !v)}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            padding: '14px 16px',
+            background: 'transparent',
+            border: 'none',
+            textAlign: 'left',
+            minHeight: 48,
+          }}
+        >
+          <span style={{ fontWeight: 600, fontSize: 14 }}>
+            Configurar servidor (Evolution)
+          </span>
+          {showAdvanced ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+        </button>
+        {showAdvanced ? (
+          <div style={{ padding: '0 16px 16px' }}>
+            <p
+              style={{
+                margin: '0 0 12px',
+                fontSize: 12,
+                color: 'var(--color-text-muted)',
+                lineHeight: 1.45,
+              }}
+            >
+              O Lista Zap não é o WhatsApp Web. Ele precisa de um servidor{' '}
+              <strong>Evolution API</strong> rodando (no seu PC ou na nuvem). Aí
+              sim aparece o QR pra parear o seu número.
+            </p>
+            <Field
+              label="Endereço do servidor"
+              value={settings.evolutionUrl}
+              onChange={(v) => settings.setSettings({ evolutionUrl: v })}
+              placeholder={
+                isOnVercel()
+                  ? 'https://sua-evolution.com'
+                  : 'http://127.0.0.1:8081'
+              }
+            />
+            <Field
+              label="Chave secreta (API key)"
+              value={settings.evolutionApiKey}
+              onChange={(v) => settings.setSettings({ evolutionApiKey: v })}
+              placeholder="Cole a chave real aqui"
+              type="password"
+            />
+            <Field
+              label="Nome da instância"
+              value={settings.evolutionInstance}
+              onChange={(v) => settings.setSettings({ evolutionInstance: v })}
+              placeholder="lista-zap"
+            />
+            <p
+              style={{
+                margin: '0 0 12px',
+                fontSize: 11,
+                color: 'var(--color-text-faint)',
+                lineHeight: 1.4,
+              }}
+            >
+              {isOnVercel()
+                ? 'No site da Vercel use só HTTPS público da Evolution. Localhost não funciona na nuvem.'
+                : 'No Mac: se a Evolution roda na sua máquina, use http://127.0.0.1:PORTA. No celular, use o IP do Mac na rede (192.168.x.x).'}
+            </p>
+            <Toggle
+              label="Modo demo (sem WhatsApp real)"
+              description="Simula envios. Desliga sozinho ao tocar em Conectar WhatsApp."
+              checked={settings.demoMode}
+              onChange={(v) => {
+                settings.setSettings({ demoMode: v })
+                if (v) {
+                  stopPolling()
+                  setQrDataUrl(null)
+                  setPairingCode(null)
+                  setWaStatus('unknown')
+                  setWaError(null)
+                }
+              }}
+            />
+          </div>
+        ) : null}
+      </Card>
 
       <Section title="Gemini">
         <Field

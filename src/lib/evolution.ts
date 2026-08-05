@@ -235,11 +235,32 @@ export async function getConnectionState(
   }
 }
 
+function pickPairingCode(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null
+  const o = data as Record<string, unknown>
+  const candidates = [
+    o.pairingCode,
+    o.code,
+    (o.instance as Record<string, unknown> | undefined)?.pairingCode,
+    (o.data as Record<string, unknown> | undefined)?.pairingCode,
+    (o.qrcode as Record<string, unknown> | undefined)?.pairingCode,
+  ]
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim().length >= 4 && c.length <= 16) {
+      // pairing code costuma ser curto alfanumérico (não base64 longo)
+      if (!/^[A-Za-z0-9+/=]{80,}$/.test(c.replace(/\s/g, ''))) {
+        return c.trim().toUpperCase()
+      }
+    }
+  }
+  return null
+}
+
 export async function fetchQrCode(
   url: string,
   apiKey: string,
   instance: string,
-): Promise<{ qr: string | null; error?: string }> {
+): Promise<{ qr: string | null; pairingCode?: string | null; error?: string }> {
   // v1/v2: connect gera/atualiza QR; alguns usam qrcode
   const paths = [
     `/instance/connect/${encodeURIComponent(instance)}`,
@@ -248,6 +269,7 @@ export async function fetchQrCode(
   ]
 
   let lastError = ''
+  let lastPairing: string | null = null
   for (const path of paths) {
     try {
       const res = await evoFetch(url, apiKey, path, { method: 'GET' })
@@ -262,11 +284,16 @@ export async function fetchQrCode(
       }
       const data = await res.json().catch(() => null)
       const qr = pickQrFromPayload(data)
-      if (qr) return { qr }
+      const pairing = pickPairingCode(data)
+      if (pairing) lastPairing = pairing
+      if (qr) return { qr, pairingCode: pairing }
       // às vezes connect devolve count sem base64 se já conectado
       const state = pickState(data)
       if (state === 'open') {
-        return { qr: null, error: 'Instância já conectada (open)' }
+        return { qr: null, error: 'WhatsApp já está conectado' }
+      }
+      if (pairing) {
+        return { qr: null, pairingCode: pairing }
       }
       lastError = `Resposta sem QR em ${path}`
     } catch (err) {
@@ -279,7 +306,11 @@ export async function fetchQrCode(
   }
   return {
     qr: null,
-    error: sanitizeErrorMessage(lastError || 'Não foi possível obter QR'),
+    pairingCode: lastPairing,
+    error: sanitizeErrorMessage(
+      lastError ||
+        'Não foi possível obter o QR. Confira se a Evolution está ligada e a chave está correta.',
+    ),
   }
 }
 
