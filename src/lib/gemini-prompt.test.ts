@@ -48,7 +48,15 @@ describe('acceptRewriteOrBase', () => {
     const base =
       'Olá Yasmin! Tudo bem? Passando pra te apresentar uma condição especial. Posso te explicar em 2 minutos?'
     const cut = 'Olá Yasmin,'
-    expect(acceptRewriteOrBase(base, cut)).toBe(base)
+    expect(acceptRewriteOrBase(base, cut, 'Yasmin')).toBe(base)
+  })
+
+  it('rejeita 4 palavras (thinking truncado)', () => {
+    const base =
+      'Olá Yasmin! Tudo bem? Passando pra te apresentar uma condição especial. Posso te explicar em 2 minutos?'
+    expect(acceptRewriteOrBase(base, 'Olá Yasmin tudo bem', 'Yasmin')).toBe(
+      base,
+    )
   })
 
   it('rejeita troca de nome (Yasmin → Roberto)', () => {
@@ -56,7 +64,15 @@ describe('acceptRewriteOrBase', () => {
       'Olá Yasmin! Tudo bem? Passando pra te apresentar uma condição especial.'
     const wrong =
       'Olá Roberto! Tudo bem? Passando pra te apresentar uma condição especial.'
-    expect(acceptRewriteOrBase(base, wrong)).toBe(base)
+    expect(acceptRewriteOrBase(base, wrong, 'Yasmin')).toBe(base)
+  })
+
+  it('aceita reescrita completa com nome', () => {
+    const base =
+      'Olá Yasmin! Tudo bem? Passando pra te apresentar uma condição especial. Posso te explicar em 2 minutos?'
+    const good =
+      'Olá Yasmin! Tudo bem? Queria te apresentar uma condição especial. Posso te explicar em 2 minutos?'
+    expect(acceptRewriteOrBase(base, good, 'Yasmin')).toBe(good)
   })
 
   it('extrai tokens factuais', () => {

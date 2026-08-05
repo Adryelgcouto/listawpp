@@ -152,9 +152,15 @@ export async function startQueueWorker() {
           nome: sanitizePersonName(item.name),
           seed: item.attempts + item.phone.length,
           useGemini: settings.useGeminiRewrite,
-          forceDemo: settings.demoMode,
+          // demoMode só simula envio — NÃO força rewrite local se o user quer live text
+          forceDemo: false,
         })
         const message = assertSafeOutboundText(msgRaw, 'mensagem WhatsApp')
+        safeLog(
+          'info',
+          `Texto ${message.length} chars · ${settings.useGeminiRewrite ? 'rewrite' : 'template'} · ${who}`,
+          item.id,
+        )
 
         if (settings.demoMode) {
           await sleep(400 + Math.random() * 600, { aborted: loopAbort })

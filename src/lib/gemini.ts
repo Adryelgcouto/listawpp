@@ -101,36 +101,39 @@ export function extractPersonNames(text: string): string[] {
 }
 
 /**
- * Garante que a reescrita não cortou, não trocou nome e não sumiu fatos.
- * Se falhar, devolve a base intacta (template com o nome certo).
+ * Aceita reescrita só se estiver completa e com o nome certo.
+ * Caso contrário devolve o template base (mensagem inteira).
  */
-export function acceptRewriteOrBase(base: string, candidate: string): string {
+export function acceptRewriteOrBase(
+  base: string,
+  candidate: string,
+  expectedName = '',
+): string {
   const out = candidate
     .replace(/^["“']+|["”']+$/g, '')
     .replace(/^(aqui est[aá]|mensagem|texto)\s*[:\-–]\s*/i, '')
     .trim()
   if (!out) return base
 
-  // não aceita recorte absurdo (mensagem "Olá Yasmin," pela metade)
-  if (out.length < Math.min(24, Math.floor(base.length * 0.55))) return base
-  if (out.length > Math.max(base.length * 1.6, base.length + 80)) return base
+  // Gemini 2.5 “thinking” às vezes devolve 3–4 palavras — nunca enviar isso
+  const minLen = Math.max(40, Math.floor(base.length * 0.65))
+  if (out.length < minLen) return base
 
-  // termina cortado (vírgula/hifen solto, sem pontuação final se a base tinha)
-  if (/[,;:\-–—…]\s*$/.test(out) && !/[,;:\-–—…]\s*$/.test(base)) return base
-  if (base.length > 40 && /[!?.…]\s*$/.test(base) && !/[!?.…]\s*$/.test(out)) {
+  // termina claramente cortado
+  if (/[,;:\-–—]\s*$/.test(out)) return base
+
+  const name = expectedName.trim()
+  if (name.length >= 2 && !out.toLowerCase().includes(name.toLowerCase())) {
     return base
   }
-
-  // nome da pessoa tem que continuar na reescrita
-  for (const name of extractPersonNames(base)) {
-    if (!out.toLowerCase().includes(name.toLowerCase())) return base
+  for (const n of extractPersonNames(base)) {
+    if (!out.toLowerCase().includes(n.toLowerCase())) return base
   }
 
-  const facts = extractFactualTokens(base)
-  for (const f of facts) {
+  for (const f of extractFactualTokens(base)) {
     const needle = f.replace(/\s+/g, '')
     const hay = out.replace(/\s+/g, '')
-    if (needle && !hay.includes(needle) && !out.includes(f)) {
+    if (needle.length >= 2 && !hay.includes(needle) && !out.includes(f)) {
       return base
     }
   }
@@ -156,23 +159,44 @@ async function geminiGenerate(params: {
 
   for (const model of models) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(params.apiKey)}`
+    // tenta com thinkingConfig (2.5); se 400, repete sem ele
+    const configAttempts: Record<string, unknown>[] = [
+      params.generationConfig,
+    ]
+    if ('thinkingConfig' in (params.generationConfig || {})) {
+      const { thinkingConfig: _t, ...rest } = params.generationConfig as {
+        thinkingConfig?: unknown
+      } & Record<string, unknown>
+      configAttempts.push(rest)
+    }
+
     try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        signal: AbortSignal.timeout(params.timeoutMs),
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: params.parts }],
-          generationConfig: params.generationConfig,
-        }),
-      })
+      let res: Response | null = null
+      let lastBody = ''
+      for (const generationConfig of configAttempts) {
+        res = await fetch(endpoint, {
+          method: 'POST',
+          signal: AbortSignal.timeout(params.timeoutMs),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: params.parts }],
+            generationConfig,
+          }),
+        })
+        if (res.ok) break
+        lastBody = await res.text().catch(() => '')
+        // só tenta sem thinkingConfig se o erro parecer de config
+        if (res.status !== 400) break
+      }
+      if (!res) continue
+
       if (res.status === 404) {
         lastStatus = 404
         lastMsg = `Modelo ${model} não encontrado (404)`
         continue
       }
       if (!res.ok) {
-        const body = await res.text().catch(() => '')
+        const body = lastBody
         let hint = `HTTP ${res.status}`
         try {
           const j = JSON.parse(body) as { error?: { message?: string } }
@@ -182,23 +206,38 @@ async function geminiGenerate(params: {
         }
         lastStatus = res.status
         lastMsg = hint
-        // 400/403 de key não adianta trocar modelo
-        if (res.status === 400 || res.status === 401 || res.status === 403) {
+        // 401/403 de key não adianta trocar modelo
+        if (res.status === 401 || res.status === 403) {
           return { ok: false, status: res.status, message: hint }
         }
         continue
       }
       const data = (await res.json()) as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+        candidates?: Array<{
+          finishReason?: string
+          content?: {
+            parts?: Array<{ text?: string; thought?: boolean }>
+          }
+        }>
       }
+      const cand = data.candidates?.[0]
+      // 2.5 thinking: ignora parts de raciocínio interno
       const text =
-        data.candidates?.[0]?.content?.parts
-          ?.map((p) => p.text ?? '')
+        cand?.content?.parts
+          ?.filter((p) => !p.thought)
+          .map((p) => p.text ?? '')
           .join('')
           .trim() ?? ''
       if (!text) {
         lastStatus = res.status
         lastMsg = 'Resposta vazia do modelo'
+        continue
+      }
+      // se cortou por limite de tokens, não devolve lixo incompleto
+      const fr = String(cand?.finishReason || '').toUpperCase()
+      if (fr === 'MAX_TOKENS' || fr === 'LENGTH') {
+        lastStatus = res.status
+        lastMsg = 'Resposta cortada por limite de tokens'
         continue
       }
       return { ok: true, text, model }
@@ -465,32 +504,31 @@ export async function rewriteMessage(params: {
   registerRuntimeSecret(params.apiKey)
 
   try {
+    // Preferir modelo sem “thinking” pesado no rewrite (2.5 come tokens e corta o texto)
+    const rewriteModel =
+      /2\.5|thinking|pro/i.test(params.model) &&
+      !/flash-lite/i.test(params.model)
+        ? 'gemini-2.0-flash'
+        : params.model
+
     const gen = await geminiGenerate({
       apiKey: params.apiKey,
-      model: params.model,
+      model: rewriteModel,
       parts: [{ text: buildRewritePrompt(base) }],
       generationConfig: {
-        temperature: 0.4,
-        // 200 tokens cortava frase no meio — margem folgada pra mensagem completa
-        maxOutputTokens: 1024,
+        temperature: 0.45,
+        maxOutputTokens: 2048,
+        // Gemini 2.5: zera thinking pra não gastar o budget e devolver 4 palavras
+        thinkingConfig: { thinkingBudget: 0 },
       },
-      timeoutMs: 25_000,
+      timeoutMs: 30_000,
     })
 
-    // Falha ou recorte/nome errado → template com o nome do item da fila
+    // Falha ou recorte → template COMPLETO com o nome do contato da fila
     if (!gen.ok || !gen.text) return base
 
     const cleaned = stripCpfEverywhere(gen.text)
-    const accepted = acceptRewriteOrBase(base, cleaned)
-
-    // reforço: se o nome do destinatário sumiu, nunca envia a reescrita
-    if (
-      safeName.length >= 2 &&
-      !accepted.toLowerCase().includes(safeName.toLowerCase())
-    ) {
-      return base
-    }
-    return accepted
+    return acceptRewriteOrBase(base, cleaned, safeName)
   } catch {
     return base
   }
