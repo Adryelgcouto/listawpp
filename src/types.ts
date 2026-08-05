@@ -29,13 +29,19 @@ export interface ExtractedRow {
   selected: boolean
 }
 
+export type QueueMessageSource = 'template' | 'rewrite' | 'fallback' | 'demo'
+
 export interface QueueItem {
   id: string
   clientId: string
   name: string
   phone: string
   status: QueueItemStatus
+  /** Preview curto (persistido) */
   messagePreview?: string
+  /** Texto completo enviado — só memória de sessão (não persistir) */
+  messageText?: string
+  messageSource?: QueueMessageSource
   error?: string
   createdAt: string
   sentAt?: string

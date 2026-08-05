@@ -387,18 +387,41 @@ function QueueRow({ item, onSkip }: { item: QueueItem; onSkip: () => void }) {
               {item.error}
             </div>
           ) : null}
-          {item.messagePreview ? (
+          {item.messageSource ? (
             <div
               style={{
-                fontSize: 11,
-                color: 'var(--color-text-faint)',
-                marginTop: 4,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
+                fontSize: 10.5,
+                fontWeight: 600,
+                color:
+                  item.messageSource === 'rewrite'
+                    ? 'var(--color-accent)'
+                    : item.messageSource === 'fallback'
+                      ? 'var(--color-warn)'
+                      : 'var(--color-text-faint)',
+                marginTop: 6,
               }}
             >
-              {item.messagePreview}
+              {item.messageSource === 'rewrite'
+                ? 'Rewrite Gemini'
+                : item.messageSource === 'fallback'
+                  ? 'Template — fallback'
+                  : item.messageSource === 'demo'
+                    ? 'Simulado'
+                    : 'Template'}
+            </div>
+          ) : null}
+          {item.messageText || item.messagePreview ? (
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--color-text-muted)',
+                marginTop: 4,
+                lineHeight: 1.4,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {item.messageText || item.messagePreview}
             </div>
           ) : null}
         </div>

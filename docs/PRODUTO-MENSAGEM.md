@@ -19,7 +19,17 @@ Rewrite Gemini é **opcional** e **não bloqueia** o envio.
 
 ## Como usar no serviço
 
-1. Hard refresh  
+1. Hard refresh em https://listawpp.vercel.app  
 2. Deixe **Reescrever com Gemini desligado** (recomendado)  
 3. Confira o preview em **Hoje** e o card em **Fila**  
-4. Envie — a mensagem deve ser a do template inteira  
+4. Envie **só em uma aba** (lock entre abas)  
+5. A mensagem deve ser a do template inteira  
+
+## Codex Sol (mensagem)
+
+**GO** na decisão de produto · gaps fechados nesta onda:
+- rewrite OFF forçado uma vez no load (legado com ON)
+- preview completo no card (sem nowrap)
+- `messageText` só em memória; não grava no localStorage
+- `finishReason` só STOP
+- Web Lock `lista-zap-queue-leader` (evita 2 abas)

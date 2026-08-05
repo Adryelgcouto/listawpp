@@ -187,9 +187,13 @@ export const useQueueStore = create<QueueState>()(
     {
       name: 'lista-zap-queue',
       partialize: (s) => ({
-        items: s.items.map((i) =>
-          i.status === 'sending' ? { ...i, status: 'pending' as const } : i,
-        ),
+        items: s.items.map((i) => {
+          const base =
+            i.status === 'sending' ? { ...i, status: 'pending' as const } : { ...i }
+          // nunca persistir corpo completo da mensagem
+          const { messageText: _mt, ...rest } = base
+          return rest
+        }),
         running: false,
         paused: false,
         logs: s.logs.slice(0, 50),

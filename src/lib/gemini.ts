@@ -233,11 +233,11 @@ async function geminiGenerate(params: {
         lastMsg = 'Resposta vazia do modelo'
         continue
       }
-      // se cortou por limite de tokens, não devolve lixo incompleto
-      const fr = String(cand?.finishReason || '').toUpperCase()
-      if (fr === 'MAX_TOKENS' || fr === 'LENGTH') {
+      // Só aceita conclusão limpa (STOP). MAX_TOKENS/LENGTH/SAFETY/etc → fallback
+      const fr = String(cand?.finishReason || 'STOP').toUpperCase()
+      if (fr && fr !== 'STOP' && fr !== 'END_TURN') {
         lastStatus = res.status
-        lastMsg = 'Resposta cortada por limite de tokens'
+        lastMsg = `finishReason=${fr}`
         continue
       }
       return { ok: true, text, model }

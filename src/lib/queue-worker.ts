@@ -84,6 +84,47 @@ export function pauseQueueWorker() {
 
 registerWipeStopWorker(stopQueueWorker)
 
+let tabLockRelease: (() => void) | null = null
+
+async function acquireTabLock(): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !navigator.locks?.request) {
+    return true
+  }
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (v: boolean) => {
+      if (!settled) {
+        settled = true
+        resolve(v)
+      }
+    }
+    void navigator.locks
+      .request(
+        'lista-zap-queue-leader',
+        { ifAvailable: true },
+        async (lock) => {
+          if (!lock) {
+            done(false)
+            return
+          }
+          await new Promise<void>((rel) => {
+            tabLockRelease = rel
+            done(true)
+          })
+        },
+      )
+      .catch(() => done(true))
+    setTimeout(() => done(true), 800)
+  })
+}
+
+function releaseTabLock() {
+  if (tabLockRelease) {
+    tabLockRelease()
+    tabLockRelease = null
+  }
+}
+
 export async function startQueueWorker() {
   const q = useQueueStore.getState()
   q.setRunning(true)
@@ -93,6 +134,17 @@ export async function startQueueWorker() {
     requestQueueWake()
     return
   }
+
+  const gotLock = await acquireTabLock()
+  if (!gotLock) {
+    q.setRunning(false)
+    safeLog(
+      'warn',
+      'Fila já ativa em outra aba — abra só uma aba para enviar',
+    )
+    return
+  }
+
   loopRunning = true
   safeLog('info', 'Fila iniciada')
 
@@ -213,13 +265,21 @@ export async function startQueueWorker() {
         useQueueStore.getState().updateItem(item.id, {
           status: 'sent',
           messagePreview: safeMessagePreview(message),
+          messageText: message,
+          messageSource: prepared.source,
           sentAt: new Date().toISOString(),
           error: undefined,
         })
         useQueueStore.getState().bumpSentToday()
         useQueueStore.getState().bumpBatch()
         useClientsStore.getState().markValidatedByPhone(item.phone)
-        safeLog('success', `Enviado · ${who}`, item.id)
+        safeLog(
+          'success',
+          settings.demoMode
+            ? `Simulado · ${who} · ${srcLabel}`
+            : `Enviado · ${who} · ${srcLabel}`,
+          item.id,
+        )
       } catch (err) {
         const evo =
           err instanceof EvolutionError
@@ -264,6 +324,7 @@ export async function startQueueWorker() {
     }
   } finally {
     loopRunning = false
+    releaseTabLock()
     if (!useQueueStore.getState().paused) {
       useQueueStore.getState().setRunning(false)
     }

@@ -122,8 +122,22 @@ export const useSettingsStore = create<SettingsState>()(
           ...p,
           commercialImageDataUrl: null as string | null,
         } as SettingsState
-        // H2: default rewrite agora opt-in se não definido no persist antigo
+        // H2: default rewrite opt-in
         if (p.useGeminiRewrite === undefined) {
+          merged.useGeminiRewrite = false
+        }
+        // Produto 2026-08-05: força rewrite OFF uma vez (usuários com true legado)
+        // flag em sessionStorage pra não reabrir o toggle a cada load
+        try {
+          const flag = 'lista-zap-msg-product-v2'
+          if (
+            typeof sessionStorage !== 'undefined' &&
+            !sessionStorage.getItem(flag)
+          ) {
+            merged.useGeminiRewrite = false
+            sessionStorage.setItem(flag, '1')
+          }
+        } catch {
           merged.useGeminiRewrite = false
         }
         registerSecretsFrom(merged)

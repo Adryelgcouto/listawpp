@@ -23,6 +23,9 @@ export const QueueItemSchema = z.object({
   phone: z.string(),
   status: z.enum(['pending', 'sending', 'sent', 'failed', 'skipped']),
   messagePreview: z.string().optional(),
+  messageSource: z
+    .enum(['template', 'rewrite', 'fallback', 'demo'])
+    .optional(),
   error: z.string().optional(),
   createdAt: z.string(),
   sentAt: z.string().optional(),
