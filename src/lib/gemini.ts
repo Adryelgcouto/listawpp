@@ -1,7 +1,7 @@
 import type { ExtractedRow } from '@/types'
 import { createId } from './id'
 import { sampleExtractedRows } from './demo-data'
-import { applyTemplate, localRewrite } from './message'
+import { applyTemplate, localRewrite, normalizeOutboundText } from './message'
 import { isValidBrPhone, normalizePhone } from './phone'
 import {
   registerRuntimeSecret,
@@ -56,6 +56,9 @@ Regras obrigatórias, em ordem de prioridade:
    A mensagem deve estar INTEIRA, com frases completas. Nunca termine no meio.
 9. Só mantenha emoji se a base já tiver; no máximo um.
 10. Não use hashtags, markdown, aspas externas, assinatura ou explicações.
+11. PRESERVE a formatação da base: mesma quantidade de parágrafos e quebras de
+    linha, na mesma ordem. Se a base tem linha em branco entre os blocos,
+    a saída também tem. Nunca junte tudo em um parágrafo só.
 
 Saída: somente a mensagem final completa.
 
@@ -121,6 +124,11 @@ export function acceptRewriteOrBase(
 
   // termina claramente cortado
   if (/[,;:\-–—]\s*$/.test(out)) return base
+
+  // achatou os parágrafos da base → mensagem chegaria grudada, usa a base
+  const baseBreaks = (base.match(/\n/g) ?? []).length
+  const outBreaks = (out.match(/\n/g) ?? []).length
+  if (baseBreaks > 0 && outBreaks < baseBreaks) return base
 
   const name = expectedName.trim()
   if (name.length >= 2 && !out.toLowerCase().includes(name.toLowerCase())) {
@@ -496,8 +504,10 @@ export async function rewriteMessage(params: {
   forceDemo?: boolean
 }): Promise<PreparedMessage> {
   const safeName = sanitizePersonName(params.nome)
-  // H-02: sanitiza ANTES de ir ao Google
-  const base = stripCpfEverywhere(applyTemplate(params.template, safeName))
+  // H-02: sanitiza ANTES de ir ao Google — normalize mantém os parágrafos
+  const base = normalizeOutboundText(
+    stripCpfEverywhere(applyTemplate(params.template, safeName)),
+  )
 
   // Demo sem rewrite Gemini: variação local (não é envio real)
   if (params.forceDemo && !params.useGemini) {
@@ -564,7 +574,7 @@ export async function rewriteMessage(params: {
       }
     }
 
-    const cleaned = stripCpfEverywhere(gen.text)
+    const cleaned = normalizeOutboundText(stripCpfEverywhere(gen.text))
     const accepted = acceptRewriteOrBase(base, cleaned, safeName)
     if (accepted === base) {
       return {

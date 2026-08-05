@@ -56,8 +56,34 @@ function windowIsCpf(d: string): boolean {
 }
 
 /**
+ * Limpa espaço sobrando SEM destruir quebra de linha.
+ * A mensagem do WhatsApp precisa manter parágrafos — colapsar \n\n em " "
+ * fazia a mensagem chegar toda grudada.
+ */
+function tidySpacesKeepingLineBreaks(text: string): string {
+  return (
+    text
+      .replace(/\r\n?/g, '\n')
+      // espaços/tabs repetidos → 1 espaço (nunca mexe em \n)
+      .replace(/[^\S\n]{2,}/g, ' ')
+      // espaço sobrando no fim da linha
+      .replace(/[^\S\n]+\n/g, '\n')
+      // espaço sobrando no início da linha
+      .replace(/\n[^\S\n]+/g, '\n')
+      .trim()
+  )
+}
+
+/**
+ * Sequência de 11+ dígitos com separadores comuns de CPF.
+ * NÃO inclui \n: CPF nunca é escrito quebrado em duas linhas, e casar através
+ * da quebra apagaria conteúdo legítimo (ex.: lista de datas, uma por linha).
+ */
+const CPF_ISH = /(?:\d[\d.\-/ \t]*){10}\d/g
+
+/**
  * C1 — Remove CPF de texto livre.
- * Casa 11 dígitos com separadores [.\-\s/] (sem depender de \b).
+ * Casa 11 dígitos com separadores [.\- /] (sem depender de \b).
  * Protege telefones 55… antes de redigir.
  */
 export function stripCpfFromText(text: string): string {
@@ -70,7 +96,7 @@ export function stripCpfFromText(text: string): string {
   })
 
   // Trechos com 11+ dígitos e separadores
-  out = out.replace(/(?:\d[\d.\-\s/]*){10}\d/g, (match) => {
+  out = out.replace(CPF_ISH, (match) => {
     const digits = match.replace(/\D/g, '')
     if (digits.length < 11) return match
     for (let i = 0; i <= digits.length - 11; i++) {
@@ -85,7 +111,7 @@ export function stripCpfFromText(text: string): string {
   out = out.replace(/\d{11}/g, (m) => (windowIsCpf(m) ? '[cpf-removido]' : m))
 
   out = out.replace(/__PHONE_(\d+)__/g, (_, i) => phones[Number(i)] ?? '')
-  return out.replace(/\s{2,}/g, ' ').trim()
+  return tidySpacesKeepingLineBreaks(out)
 }
 
 export function containsCpfPattern(text: string): boolean {
@@ -94,7 +120,7 @@ export function containsCpfPattern(text: string): boolean {
   // ignore protected phone shapes for detection of residual CPF
   const withoutPhones = text.replace(/55\d{10,11}/g, '')
 
-  const chunks = withoutPhones.match(/(?:\d[\d.\-\s/]*){10}\d/g) ?? []
+  const chunks = withoutPhones.match(CPF_ISH) ?? []
   for (const chunk of chunks) {
     const digits = chunk.replace(/\D/g, '')
     for (let i = 0; i <= digits.length - 11; i++) {

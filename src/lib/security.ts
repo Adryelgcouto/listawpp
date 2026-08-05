@@ -69,6 +69,8 @@ export function sanitizeErrorMessage(raw: string, maxLen = 180): string {
   // telefone primeiro
   s = s.replace(/\b\d{10,13}\b/g, (m) => maskPhoneForLog(m))
   s = stripCpfEverywhere(s)
+  // log é sempre 1 linha (stripCpf agora preserva \n de propósito)
+  s = s.replace(/\s+/g, ' ').trim()
   if (s.length > maxLen) s = `${s.slice(0, maxLen)}…`
   return s
 }
@@ -102,11 +104,11 @@ export function assertSafeOutboundText(text: string, context: string): string {
   return clean
 }
 
-/** Sanitiza nome na ingestão — remove CPF colado pelo OCR (C1). */
+/** Sanitiza nome na ingestão — remove CPF colado pelo OCR (C1). Nome é sempre 1 linha. */
 export function sanitizePersonName(name: string): string {
   return stripCpfEverywhere(name || '')
     .replace(/\[cpf-removido\]/gi, '')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim()
 }
 
