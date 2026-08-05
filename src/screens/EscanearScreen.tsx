@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import {
   Camera,
   Check,
+  FileSpreadsheet,
   ImagePlus,
   Loader2,
   Sparkles,
@@ -16,6 +17,10 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Input } from '@/components/ui/Input'
+import {
+  isSpreadsheetFile,
+  parseSpreadsheetFile,
+} from '@/lib/excel-import'
 import { extractFromImages } from '@/lib/gemini'
 import { normalizeCpf } from '@/lib/cpf'
 import {
@@ -29,14 +34,18 @@ import { useQueueStore } from '@/stores/queue'
 import { useSettingsStore } from '@/stores/settings'
 import type { ExtractedRow } from '@/types'
 
+type ExtractSource = 'gemini' | 'demo' | 'excel' | 'csv'
+
 export function EscanearScreen() {
   const navigate = useNavigate()
   const fileRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
+  const sheetRef = useRef<HTMLInputElement>(null)
   const [photos, setPhotos] = useState<string[]>([])
   const [rows, setRows] = useState<ExtractedRow[]>([])
   const [busy, setBusy] = useState(false)
-  const [source, setSource] = useState<'gemini' | 'demo' | null>(null)
+  const [source, setSource] = useState<ExtractSource | null>(null)
+  const [sheetHint, setSheetHint] = useState<string | null>(null)
 
   const settings = useSettingsStore()
   const upsertFromRows = useClientsStore((s) => s.upsertFromRows)
@@ -57,6 +66,43 @@ export function EscanearScreen() {
     }
     setPhotos((p) => [...p, ...urls].slice(0, 8))
     toast.success(`${urls.length} foto(s) adicionada(s)`)
+  }
+
+  const importSpreadsheet = async (files: FileList | null) => {
+    if (!files?.length) return
+    const file = files[0]
+    if (!file || !isSpreadsheetFile(file)) {
+      toast.error('Use .xlsx, .xls, .csv ou .tsv')
+      return
+    }
+    setBusy(true)
+    setSheetHint(null)
+    try {
+      const result = await parseSpreadsheetFile(file)
+      if (result.error && result.rows.length === 0) {
+        toast.error(result.error)
+        return
+      }
+      setRows(result.rows)
+      setSource(result.source)
+      setPhotos([])
+      const mapBits = [
+        `Nome ← ${result.mapping.nome}`,
+        `Tel ← ${result.mapping.telefone}`,
+      ]
+      if (result.mapping.cpf) mapBits.push(`CPF ← ${result.mapping.cpf}`)
+      setSheetHint(
+        `${result.sheetName || file.name} · ${mapBits.join(' · ')}`,
+      )
+      const valid = result.rows.filter((r) => r.selected).length
+      toast.success(
+        `${result.rows.length} linha(s) · ${valid} com telefone válido`,
+      )
+      if (result.error) toast.message(result.error)
+    } finally {
+      setBusy(false)
+      if (sheetRef.current) sheetRef.current.value = ''
+    }
   }
 
   const runExtract = async (forceDemo = false) => {
@@ -125,7 +171,7 @@ export function EscanearScreen() {
     <div>
       <PageHeader
         title="Escanear"
-        subtitle="Foto da lista → revisão → fila"
+        subtitle="Foto, Excel ou CSV → revisão → fila"
       />
 
       <Card style={{ marginBottom: 12 }}>
@@ -146,6 +192,15 @@ export function EscanearScreen() {
           >
             Galeria
           </Button>
+          <Button
+            variant="secondary"
+            icon={<FileSpreadsheet size={16} />}
+            onClick={() => sheetRef.current?.click()}
+            disabled={busy}
+            style={{ flex: 1 }}
+          >
+            Excel / CSV
+          </Button>
         </div>
         <input
           ref={cameraRef}
@@ -163,6 +218,13 @@ export function EscanearScreen() {
           multiple
           hidden
           onChange={(e) => void addFiles(e.target.files)}
+        />
+        <input
+          ref={sheetRef}
+          type="file"
+          accept=".xlsx,.xls,.xlsm,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values"
+          hidden
+          onChange={(e) => void importSpreadsheet(e.target.files)}
         />
 
         {photos.length > 0 ? (
@@ -250,17 +312,19 @@ export function EscanearScreen() {
             lineHeight: 1.4,
           }}
         >
-          Com Gemini: a <strong>foto</strong> vai para o Google. O app não pede
-          CPF ao modelo; CPF só se você digitar manualmente.
+          <strong>Excel/CSV</strong> (recomendado): detecta Nome, Telefone e
+          CPF sozinho — dados ficam só neste aparelho. Com{' '}
+          <strong>Gemini + foto</strong>: a imagem vai pro Google; o app não
+          pede CPF ao modelo.
         </p>
       </Card>
 
       {rows.length === 0 ? (
         <Card padded={false}>
           <EmptyState
-            icon={<Camera size={24} />}
-            title="Nenhuma extração ainda"
-            description="Fotografe uma lista de papel ou carregue a lista demo para revisar contatos."
+            icon={<FileSpreadsheet size={24} />}
+            title="Nenhuma lista ainda"
+            description="Importe Excel/CSV com colunas Nome e Telefone, fotografe uma lista ou use a demo."
           />
         </Card>
       ) : (
@@ -271,17 +335,44 @@ export function EscanearScreen() {
               alignItems: 'center',
               justifyContent: 'space-between',
               marginBottom: 10,
+              gap: 8,
             }}
           >
             <div style={{ fontWeight: 600, fontSize: 14 }}>
               Revisar {rows.length} linha(s)
             </div>
             {source ? (
-              <Badge tone={source === 'gemini' ? 'info' : 'accent'}>
-                {source === 'gemini' ? 'Gemini' : 'Demo'}
+              <Badge
+                tone={
+                  source === 'gemini'
+                    ? 'info'
+                    : source === 'excel' || source === 'csv'
+                      ? 'success'
+                      : 'accent'
+                }
+              >
+                {source === 'gemini'
+                  ? 'Gemini'
+                  : source === 'excel'
+                    ? 'Excel'
+                    : source === 'csv'
+                      ? 'CSV'
+                      : 'Demo'}
               </Badge>
             ) : null}
           </div>
+          {sheetHint ? (
+            <p
+              style={{
+                margin: '0 0 10px',
+                fontSize: 12,
+                color: 'var(--color-text-muted)',
+                lineHeight: 1.4,
+              }}
+            >
+              {sheetHint}
+            </p>
+          ) : null}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {rows.map((row) => (
@@ -402,6 +493,7 @@ export function EscanearScreen() {
               onClick={() => {
                 setRows([])
                 setSource(null)
+                setSheetHint(null)
               }}
               style={{ flex: 1 }}
             >

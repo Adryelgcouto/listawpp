@@ -93,7 +93,7 @@ export const DEFAULT_SETTINGS: Settings = {
   evolutionApiKey: '',
   evolutionInstance: 'lista-zap',
   geminiApiKey: '',
-  geminiModel: 'gemini-2.0-flash',
+  geminiModel: 'gemini-2.5-flash',
   messageTemplate: DEFAULT_TEMPLATE,
   antiBanPreset: '90',
   minDelaySec: 12,

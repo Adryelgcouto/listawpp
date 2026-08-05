@@ -12,13 +12,138 @@ import {
 
 /** Modelos estáveis pra OCR/rewrite — fallback se a listagem da API falhar. */
 export const GEMINI_MODEL_FALLBACKS: Array<{ id: string; label: string }> = [
-  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (recomendado)' },
-  { id: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite (rápido)' },
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (recomendado)' },
+  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+  { id: 'gemini-2.0-flash-001', label: 'Gemini 2.0 Flash 001' },
+  { id: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite' },
   { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
+  { id: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash latest' },
   { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
 ]
+
+/** Ordem de tentativa quando a API responde 404 (modelo indisponível na conta). */
+export const GEMINI_MODEL_RETRY_ORDER = [
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-001',
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
+  'gemini-2.0-flash-lite',
+  'gemini-1.5-pro',
+] as const
+
+/**
+ * Prompt de rewrite WhatsApp — conciso, assertivo, preserva identidade da frase.
+ * Exportado para auditoria/testes.
+ */
+export function buildRewritePrompt(message: string): string {
+  return `Você é copywriter sênior de WhatsApp comercial no Brasil.
+
+TAREFA: reescreva a MENSAGEM BASE em 1 variação curta, pronta para enviar.
+
+IDENTIDADE (inegociável):
+- Preserve a mesma oferta, o mesmo pedido e o mesmo objetivo.
+- NÃO mude o produto, preço, condição, prazo ou proposta.
+- NÃO invente benefícios, descontos, urgência falsa ou dados novos.
+- Mantenha o nome da pessoa exatamente como está (se houver).
+- Se a base for formal ou informal, mantenha o mesmo registro.
+
+ESTILO:
+- Português do Brasil, natural, humano, WhatsApp — não e-mail corporativo.
+- Conciso: ideal 1–2 frases curtas (máx. ~280 caracteres).
+- Assertivo e confiante, sem ser agressivo ou spam.
+- Bonito: ritmo limpo, sem enrolação, sem “tudo bem? espero que sim…”.
+- Variação leve de palavras/ordem — não clone palavra por palavra, mas a alma fica.
+
+PROIBIDO:
+- CPF, RG, documentos, números de documento, dados sensíveis.
+- Emojis em excesso (0–1 no máximo, só se a base já usar).
+- Hashtags, links inventados, assinaturas, aspas envolvendo o texto.
+- Explicações, markdown, prefixos tipo "Aqui está:".
+
+SAÍDA: somente o texto final da mensagem, nada mais.
+
+MENSAGEM BASE:
+${message}`
+}
+
+function modelCandidates(preferred: string): string[] {
+  const p = preferred.trim().replace(/^models\//, '')
+  const list = [p, ...GEMINI_MODEL_RETRY_ORDER.filter((m) => m !== p)]
+  return [...new Set(list.filter(Boolean))]
+}
+
+async function geminiGenerate(params: {
+  apiKey: string
+  model: string
+  parts: Array<Record<string, unknown>>
+  generationConfig: Record<string, unknown>
+  timeoutMs: number
+}): Promise<{ ok: true; text: string; model: string } | { ok: false; status: number; message: string }> {
+  const models = modelCandidates(params.model)
+  let lastStatus = 0
+  let lastMsg = ''
+
+  for (const model of models) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(params.apiKey)}`
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        signal: AbortSignal.timeout(params.timeoutMs),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: params.parts }],
+          generationConfig: params.generationConfig,
+        }),
+      })
+      if (res.status === 404) {
+        lastStatus = 404
+        lastMsg = `Modelo ${model} não encontrado (404)`
+        continue
+      }
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        let hint = `HTTP ${res.status}`
+        try {
+          const j = JSON.parse(body) as { error?: { message?: string } }
+          if (j.error?.message) hint = j.error.message.slice(0, 160)
+        } catch {
+          if (body) hint = body.replace(/\s+/g, ' ').slice(0, 120)
+        }
+        lastStatus = res.status
+        lastMsg = hint
+        // 400/403 de key não adianta trocar modelo
+        if (res.status === 400 || res.status === 401 || res.status === 403) {
+          return { ok: false, status: res.status, message: hint }
+        }
+        continue
+      }
+      const data = (await res.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+      }
+      const text =
+        data.candidates?.[0]?.content?.parts
+          ?.map((p) => p.text ?? '')
+          .join('')
+          .trim() ?? ''
+      if (!text) {
+        lastStatus = res.status
+        lastMsg = 'Resposta vazia do modelo'
+        continue
+      }
+      return { ok: true, text, model }
+    } catch (err) {
+      lastStatus = 0
+      lastMsg = err instanceof Error ? err.message : String(err)
+    }
+  }
+  return {
+    ok: false,
+    status: lastStatus || 404,
+    message: lastMsg || 'Nenhum modelo Gemini respondeu',
+  }
+}
 
 export type GeminiModelOption = { id: string; label: string }
 
@@ -140,6 +265,7 @@ export async function extractFromImages(params: {
     for (const url of params.dataUrls.slice(0, 4)) {
       const m = url.match(/^data:(.+?);base64,(.+)$/)
       if (!m) continue
+      // REST v1beta aceita snake_case; camelCase também em clients oficiais
       parts.push({
         inline_data: {
           mime_type: m[1],
@@ -148,35 +274,35 @@ export async function extractFromImages(params: {
       })
     }
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(params.model)}:generateContent?key=${encodeURIComponent(params.apiKey)}`
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      signal: AbortSignal.timeout(45_000),
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts }],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: 'application/json',
-        },
-      }),
-    })
-
-    if (!res.ok) {
+    if (parts.length < 2) {
       return {
         rows: sampleExtractedRows(),
         source: 'demo',
-        error: `Gemini vision falhou (${res.status}). Usando lista demo.`,
+        error: 'Imagem inválida. Usando lista demo.',
       }
     }
 
-    const data = (await res.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+    const gen = await geminiGenerate({
+      apiKey: params.apiKey,
+      model: params.model,
+      parts,
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: 'application/json',
+        maxOutputTokens: 2048,
+      },
+      timeoutMs: 45_000,
+    })
+
+    if (!gen.ok) {
+      return {
+        rows: sampleExtractedRows(),
+        source: 'demo',
+        error: `Gemini vision falhou (${gen.status}: ${sanitizeErrorMessage(gen.message, 100)}). Use Excel/CSV ou lista demo.`,
+      }
     }
-    const text =
-      data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ??
-      ''
-    const parsed = JSON.parse(text) as {
+
+    let parsed: {
       rows?: Array<{
         nome?: string
         telefone?: string
@@ -185,15 +311,28 @@ export async function extractFromImages(params: {
         uncertain?: boolean
       }>
     }
+    try {
+      // remove fences se o modelo ignorar responseMimeType
+      const cleaned = gen.text
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim()
+      parsed = JSON.parse(cleaned) as typeof parsed
+    } catch {
+      return {
+        rows: sampleExtractedRows(),
+        source: 'demo',
+        error: 'Gemini não devolveu JSON válido. Use Excel/CSV ou lista demo.',
+      }
+    }
 
     const rows: ExtractedRow[] = (parsed.rows ?? []).map((r) => {
       const phone = normalizePhone(r.telefone ?? '')
       return {
         id: createId('row'),
-        // C1: sanitiza nome na ingestão
         nome: sanitizePersonName(r.nome ?? ''),
         telefone: phone,
-        // H2: descarta CPF vindo do modelo mesmo se o modelo inventar
+        // H2: descarta CPF do modelo
         cpf: '',
         confidence: typeof r.confidence === 'number' ? r.confidence : 0.5,
         uncertain:
@@ -208,7 +347,7 @@ export async function extractFromImages(params: {
       return {
         rows: sampleExtractedRows(),
         source: 'demo',
-        error: 'Gemini não retornou linhas. Lista demo carregada.',
+        error: 'Gemini não retornou linhas. Use Excel/CSV ou lista demo.',
       }
     }
 
@@ -221,7 +360,7 @@ export async function extractFromImages(params: {
     return {
       rows: sampleExtractedRows(),
       source: 'demo',
-      error: `Falha Gemini: ${msg}. Usando lista demo.`,
+      error: `Falha Gemini: ${msg}. Use Excel/CSV ou lista demo.`,
     }
   }
 }
@@ -245,33 +384,32 @@ export async function rewriteMessage(params: {
   registerRuntimeSecret(params.apiKey)
 
   try {
-    const prompt = `Reescreva a mensagem de WhatsApp comercial abaixo em português do Brasil, mantendo o sentido e o tom cordial. Varie palavras e ordem. NÃO inclua CPF, RG, documentos, números de documento ou dados sensíveis. NÃO invente ofertas novas. Retorne só o texto final.
-
-Mensagem:
-${base}`
-
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(params.model)}:generateContent?key=${encodeURIComponent(params.apiKey)}`
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      signal: AbortSignal.timeout(20_000),
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.85, maxOutputTokens: 400 },
-      }),
+    const gen = await geminiGenerate({
+      apiKey: params.apiKey,
+      model: params.model,
+      parts: [{ text: buildRewritePrompt(base) }],
+      generationConfig: {
+        // baixa criatividade: preserva identidade; ainda varia o suficiente
+        temperature: 0.55,
+        maxOutputTokens: 220,
+        topP: 0.9,
+      },
+      timeoutMs: 20_000,
     })
 
-    if (!res.ok) return localRewrite(base, params.seed)
+    if (!gen.ok || !gen.text) return localRewrite(base, params.seed)
 
-    const data = (await res.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+    let text = stripCpfEverywhere(gen.text)
+      .replace(/^["“']+|["”']+$/g, '')
+      .replace(/^(aqui est[aá]|mensagem|texto)\s*[:\-–]\s*/i, '')
+      .trim()
+
+    // hard cap: concisão (WhatsApp comercial)
+    if (text.length > 320) {
+      text = `${text.slice(0, 317).trim()}…`
     }
-    const text =
-      data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('').trim() ??
-      ''
-
     if (!text) return localRewrite(base, params.seed)
-    return stripCpfEverywhere(text)
+    return text
   } catch {
     return localRewrite(base, params.seed)
   }
