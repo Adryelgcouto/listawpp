@@ -77,8 +77,10 @@ export function sanitizeLogLine(message: string): string {
   return sanitizeErrorMessage(message, 220)
 }
 
-export function safeMessagePreview(text: string, max = 120): string {
-  return stripCpfEverywhere(text).slice(0, max)
+export function safeMessagePreview(text: string, max = 280): string {
+  const clean = stripCpfEverywhere(text)
+  if (clean.length <= max) return clean
+  return `${clean.slice(0, max)}…`
 }
 
 export function assertSafeOutboundText(text: string, context: string): string {

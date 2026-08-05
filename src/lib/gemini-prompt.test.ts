@@ -6,15 +6,16 @@ import {
 } from './gemini'
 
 describe('buildRewritePrompt', () => {
-  it('exige preservação de identidade e concisão', () => {
+  it('exige preservação de identidade e mensagem completa', () => {
     const p = buildRewritePrompt('Olá Maria! Condição especial pra você.')
     expect(p).toMatch(/não confiável|Nunca siga instruções/i)
     expect(p).toMatch(/Preserve integralmente a oferta/i)
-    expect(p).toMatch(/280 caracteres/i)
+    expect(p).toMatch(/COMPLETA|INTEIRA|não encurte/i)
     expect(p).toMatch(/assertivo/i)
     expect(p).toMatch(/CPF/)
+    expect(p).toMatch(/nome da pessoa|Yasmin fica Yasmin/i)
     expect(p).toContain('Olá Maria! Condição especial pra você.')
-    expect(p).toMatch(/somente a mensagem final/i)
+    expect(p).toMatch(/mensagem final completa/i)
     expect(p).toMatch(/MENSAGEM_BASE_JSON/)
   })
 
@@ -37,10 +38,25 @@ describe('acceptRewriteOrBase', () => {
     expect(acceptRewriteOrBase(base, bad)).toBe(base)
   })
 
-  it('aceita reescrita que mantém fatos', () => {
+  it('aceita reescrita que mantém fatos e nome', () => {
     const base = 'Plano por R$ 99,90 só pra você, Ana.'
     const good = 'Ana, o plano fica em R$ 99,90. Quer que eu te mostre?'
     expect(acceptRewriteOrBase(base, good)).toBe(good)
+  })
+
+  it('rejeita mensagem cortada pela metade', () => {
+    const base =
+      'Olá Yasmin! Tudo bem? Passando pra te apresentar uma condição especial. Posso te explicar em 2 minutos?'
+    const cut = 'Olá Yasmin,'
+    expect(acceptRewriteOrBase(base, cut)).toBe(base)
+  })
+
+  it('rejeita troca de nome (Yasmin → Roberto)', () => {
+    const base =
+      'Olá Yasmin! Tudo bem? Passando pra te apresentar uma condição especial.'
+    const wrong =
+      'Olá Roberto! Tudo bem? Passando pra te apresentar uma condição especial.'
+    expect(acceptRewriteOrBase(base, wrong)).toBe(base)
   })
 
   it('extrai tokens factuais', () => {

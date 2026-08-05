@@ -349,7 +349,7 @@ export function HojeScreen() {
       <Card style={{ marginBottom: 12, padding: '6px 14px 14px' }}>
         <Toggle
           label="Reescrever com Gemini"
-          description="Opt-in: envia o texto (sem CPF) ao Google a cada mensagem"
+          description="Opt-in: varia a frase mantendo o nome e o sentido. Se falhar ou cortar, manda o template inteiro."
           checked={settings.useGeminiRewrite}
           onChange={(v) => settings.setSettings({ useGeminiRewrite: v })}
         />
